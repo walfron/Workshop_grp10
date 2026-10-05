@@ -2,7 +2,7 @@
 
 Boîtier de surveillance autonome (ESP8266) pour les micro-centrales AetherCorp : détection d'intrus par vision (webcam) et détection d'anomalies température/gaz par IA, le tout chiffré et supervisé depuis un dashboard.
 
-**Équipe G<10>** : <Prénom Nom (DEV)>, <Prénom Nom (IA)>, <Prénom Nom (INFRA)>
+**Équipe G10** : Prénom Nom (DEV), Prénom Nom (IA), Anne-Lou Delage-Davies (INFRA)
 
 ## Architecture
 
