@@ -1,0 +1,25 @@
+﻿# Secrets
+.env
+*.key
+*.pem
+infra/mosquitto/passwd
+firmware/include/config.h
+
+# Python / Node
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+
+# Modèles lourds
+ai/models/*.pt
+ai/models/*.onnx
+
+# PlatformIO
+.pio/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
