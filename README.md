@@ -35,7 +35,7 @@ Variante retenue : **Option A (Raspberry Pi 5 embarqué)**.
 ## Démarrage rapide (sur le Raspberry Pi)
 
 ```bash
-git clone <url-du-repo>
+git clone https://github.com/walfron/Workshop_grp10
 cd sentinel-x
 cp .env.example .env     # puis modifier les mots de passe
 docker compose up -d --build
