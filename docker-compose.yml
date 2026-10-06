@@ -11,15 +11,18 @@ services:
     image: eclipse-mosquitto:2.0.22
     user: "1883:1883"
     restart: unless-stopped
-    # TEMPORAIRE : passer en 8883/TLS avant jeudi
-    # (remplacer par "192.168.10.10:8883:8883" + monter ./infra/mosquitto/certs:/mosquitto/certs:ro)
     # Lié à l'IP d'eth0 uniquement : les ports publiés par Docker contournent UFW.
+    # (passer à 192.168.10.10 une fois l'IP fixe en place)
     ports:
+      - "192.168.41.123:8883:8883"   # MQTTS (TLS 1.2+)
+      # TEMPORAIRE : 1883 en clair (avec auth + ACL) jusqu'à validation du TLS
+      # sur l'ESP par DEV. À SUPPRIMER avant le pentest de jeudi.
       - "192.168.41.123:1883:1883"
     volumes:
       - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./infra/mosquitto/acl:/mosquitto/config/acl:ro
       - ./infra/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./infra/mosquitto/certs:/mosquitto/certs:ro
       - ./infra/mosquitto/data:/mosquitto/data
     read_only: true
     cap_drop: [ALL]
