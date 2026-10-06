@@ -1,5 +1,6 @@
 ﻿# Secrets
 .env
+*.local
 *.key
 *.pem
 infra/mosquitto/passwd
@@ -11,6 +12,7 @@ __pycache__/
 .venv/
 node_modules/
 dist/
+backend/data/
 
 # Modèles lourds
 ai/models/*.pt
