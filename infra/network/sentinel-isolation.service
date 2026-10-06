@@ -1,0 +1,19 @@
+# Sentinel-X — charge l'isolation nftables du Wi-Fi AVANT que le réseau ne monte.
+# Installé dans /etc/systemd/system/. N'utilise pas nftables.service :
+# /etc/nftables.conf commence par "flush ruleset" et effacerait les règles de Docker.
+[Unit]
+Description=Sentinel-X : isolation nftables du Wi-Fi de la table (wlan0)
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/sentinel/isolation.nft
+ExecStop=/usr/sbin/nft delete table inet sentinel_isolation
+
+[Install]
+WantedBy=sysinit.target

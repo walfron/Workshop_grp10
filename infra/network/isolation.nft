@@ -1,0 +1,28 @@
+#!/usr/sbin/nft -f
+# Sentinel-X — isolation du Wi-Fi de la table (wlan0, 192.168.10.0/24)
+# Installé dans /etc/sentinel/isolation.nft, chargé par sentinel-isolation.service.
+# - Aucun routage wlan0 <-> eth0, aucun NAT (pas de masquerade pour 192.168.10.0/24).
+# - Table dédiée : ne touche ni aux règles de Docker ni à ip_forward (requis par Docker).
+#   Un "drop" ici est définitif, même si une autre table accepte le paquet.
+# - Rechargement idempotent : la table est recréée à chaque chargement.
+
+table inet sentinel_isolation
+delete table inet sentinel_isolation
+
+table inet sentinel_isolation {
+  chain prerouting {
+    # Priorité raw : avant le DNAT de Docker, la destination est encore l'IP d'origine.
+    # Depuis le Wi-Fi, seules les destinations du sous-réseau de la table sont admises
+    # (bloque aussi l'accès aux IP locales du Pi sur eth0 : SSH, 1883...).
+    type filter hook prerouting priority raw; policy accept;
+    iifname "wlan0" meta nfproto ipv6 drop
+    iifname "wlan0" ip daddr != { 192.168.10.0/24, 255.255.255.255, 224.0.0.0/4 } drop
+  }
+
+  chain forward {
+    # wlan0 -> br-* (DNAT Docker vers Mosquitto 8883) reste autorisé.
+    type filter hook forward priority filter - 10; policy accept;
+    iifname "wlan0" oifname { "eth0", "wlan0" } drop
+    iifname "eth0" oifname "wlan0" drop
+  }
+}
