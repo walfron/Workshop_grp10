@@ -23,3 +23,9 @@ ai/models/*.onnx
 # OS
 .DS_Store
 Thumbs.db
+pki/
+*.csr
+*.srl
+infra/mosquitto/certs/
+infra/mosquitto/data/
+infra/mosquitto/log/
