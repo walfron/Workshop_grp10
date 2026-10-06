@@ -11,12 +11,14 @@ services:
     image: eclipse-mosquitto:2.0.22
     user: "1883:1883"
     restart: unless-stopped
-    # Lié à l'IP d'eth0 uniquement : les ports publiés par Docker contournent UFW.
-    # (passer à 192.168.10.10 une fois l'IP fixe en place)
+    # Ports liés à des IP précises : les ports publiés par Docker contournent UFW.
+    # 192.168.10.10 = IP du point d'accès (wlan0) : publiable même avant que l'AP
+    # ne monte grâce à net.ipv4.ip_nonlocal_bind=1 (infra/network/sysctl-90-sentinel.conf).
     ports:
-      - "192.168.41.123:8883:8883"   # MQTTS (TLS 1.2+)
-      # TEMPORAIRE : 1883 en clair (avec auth + ACL) jusqu'à validation du TLS
-      # sur l'ESP par DEV. À SUPPRIMER avant le pentest de jeudi.
+      - "192.168.10.10:8883:8883"    # MQTTS, Wi-Fi de la table (ESP, postes d'admin)
+      - "192.168.41.123:8883:8883"   # MQTTS, administration via eth0
+      # TEMPORAIRE : 1883 en clair (avec auth + ACL), eth0 uniquement, jamais sur
+      # le Wi-Fi, jusqu'à validation du TLS sur l'ESP par DEV. À SUPPRIMER avant jeudi.
       - "192.168.41.123:1883:1883"
     volumes:
       - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

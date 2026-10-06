@@ -320,12 +320,107 @@ Tests MQTT lancés dans un conteneur jetable `eclipse-mosquitto:2.0.22` (`--netw
 
 L'entrée « `/mosquitto/log` en volume anonyme » était erronée : `log_dest stdout` envoie les logs au driver Docker `json-file` (rotation 10 Mo × 3 via `daemon.json`, consultation par `docker compose logs mosquitto`). Le volume anonyme vient de la directive `VOLUME` de l'image et reste vide. Pour le monitoring : taille de `docker inspect -f '{{.LogPath}}' sentinel-mosquitto-1` (lecture root).
 
+#### Incident : TLS absent après `git reset --hard origin/main`
+
+La branche `infra/mqtts` n'était pas encore fusionnée : le reset a remis la version 1883 seule (Mosquitto recréé sans 8883). Après fusion de la PR #2 (`db7d224`) et `git pull` : `192.168.41.123:8883` de nouveau actif, `openssl s_client` → TLSv1.3, `Verify return code: 0 (ok)`. Leçon : vérifier `git log origin/main` avant un reset.
+
+## 2026-10-06 — Point d'accès Wi-Fi isolé de la table
+
+Pas de routeur disponible : le Pi devient l'AP de la table sur wlan0 (`192.168.10.10/24`). eth0 (`192.168.41.123`, session SSH d'admin) n'est jamais modifié. SSID et mot de passe : uniquement dans `.env` (`WIFI_AP_SSID`, `WIFI_AP_PSK`, non versionné) et dans le profil NetworkManager (`/etc/NetworkManager/system-connections/sentinel-ap.nmconnection`, root 600 : `nmcli con add` crée un keyfile, pas un fichier netplan) ; jamais dans le dépôt.
+
+### État des lieux
+
+| Élément | Constat |
+|---|---|
+| NetworkManager | 1.52.1, connexions existantes stockées via netplan (`/etc/netplan/90-NM-*.yaml`, root 600) ; un profil créé par `nmcli con add` est un keyfile dans `/etc/NetworkManager/system-connections/` |
+| `ipv4.shared-dhcp-range` | ✅ supporté ; `ipv4.forwarding` (par connexion) : ❌ absent de la 1.52 |
+| wlan0 | client du Wi-Fi de l'école (`netplan-wlan0-myDiL`, `192.168.41.70/24`, 2ᵉ route par défaut metric 600) ; mode AP supporté (`iw list`) |
+| Pays Wi-Fi | ✅ `iw reg get` → `country FR: DFS-ETSI` (`cfg80211.ieee80211_regdom=FR` dans cmdline) |
+| `ip_forward` | `1` (requis par Docker, conservé) ; `ip_nonlocal_bind = 0` |
+| Pare-feu | Docker 29.8.2, backend iptables-nft ; `FORWARD` IPv4 en `policy drop`, IPv6 en `policy accept` ; `masquerade` uniquement pour `172.17.0.0/16` et `172.19.0.0/16` (Docker) ; table `ip raw` de Docker (anti-accès direct aux conteneurs) ; `nftables.service` désactivé ; UFW non installé |
+| dnsmasq | `dnsmasq-base` présent (utilisé par le mode `shared`) ; avahi actif (`sentinel.local`) |
+
+Sauvegarde des règles avant modification : `sudo nft list ruleset > ~/nft-avant-ap.txt`.
+
+### Choix (validés par l'admin)
+
+- **AP NetworkManager** `ipv4.method shared`, 2,4 GHz (`band bg`), canal 6 (à ajuster selon les tables voisines), **WPA2-PSK seul** (`proto rsn`, CCMP) car l'ESP8266 ne gère pas WPA3, **PMF désactivé** (non géré par l'ESP8266), **`ap-isolation yes`** (les clients ne se voient pas entre eux : limite le MitM ARP au pentest), IPv6 désactivé, DHCP limité à `192.168.10.100`–`.199` (ESP en IP fixe `.21` / `.22`).
+- **Aucun routage ni NAT** : le mode `shared` ajoute normalement un `masquerade` et des règles de forwarding → `firewall-backend=none` (`infra/network/nm-90-sentinel.conf`). `ip_forward` n'est **pas** coupé (Docker en a besoin).
+- **dnsmasq en DHCP seul** (`infra/network/dnsmasq-sentinel-ap.conf`) : `port=0` (pas de DNS : pas de tunnel DNS vers internet), pas de passerelle ni de DNS annoncés (un PC d'admin garde son internet par son autre interface).
+- **Isolation nftables** dans une table dédiée `inet sentinel_isolation` (`infra/network/isolation.nft`) : en `prerouting` (priorité raw, avant le DNAT Docker), tout paquet venant de wlan0 vers une destination hors `192.168.10.0/24` (et IPv6) est rejeté, ce qui bloque aussi l'accès aux IP du Pi côté école (SSH, 1883) ; en `forward`, `wlan0 → eth0/wlan0` et `eth0 → wlan0` rejetés. `wlan0 → br-*` (DNAT vers Mosquitto 8883) reste permis. Défense en profondeur : indépendante de la politique `FORWARD` de Docker et couvre IPv6.
+- Chargement au boot par `sentinel-isolation.service` (avant `network-pre.target`). **Pas** `nftables.service` : `/etc/nftables.conf` commence par `flush ruleset` et effacerait les règles de Docker.
+- **Mosquitto sur `192.168.10.10:8883`** : Docker démarre avant l'AP et échoue sans réessayer (`cannot assign requested address`) → `net.ipv4.ip_nonlocal_bind=1` (`infra/network/sysctl-90-sentinel.conf`). Risque accepté (un processus local peut se lier à une IP absente) → matrice de sécurité. Le 1883 temporaire n'est **pas** publié sur le Wi-Fi.
+- Wi-Fi de l'école : autoconnect désactivé, profil **conservé** (retour arrière).
+- Mot de passe généré sur le Pi (24 caractères alphanumériques, ~143 bits) : `tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24`, écrit directement dans `.env` sans affichage. Il transite brièvement en argument de `nmcli` (visible par `ps` pendant l'exécution) : risque faible (seuls `sentinel` et root sur le Pi) → matrice de sécurité.
+
+### Application (commandes lancées par l'admin)
+
+- Bloc A (contrôle) : sauvegarde du ruleset, `sudo nft -c -f infra/network/isolation.nft` → syntaxe OK.
+- Bloc B : `sentinel-isolation.service` installé, `enabled` (lien dans `sysinit.target.wants`) et `active` ; `nft list table inet sentinel_isolation` conforme ; `dnsmasq-shared.d/sentinel-ap.conf` installé ; `net.ipv4.ip_nonlocal_bind = 1`.
+  - **Problème** : le fichier NetworkManager a été installé sous un nom tronqué, `/etc/NetworkManager/conf.d/90-sent`. NetworkManager ne lit que les fichiers `*.conf` de `conf.d/` → `firewall-backend=none` non pris en compte (le mode `shared` aurait ajouté un NAT vers eth0). Corrigé avant la création de l'AP (`--print-config` → `firewall-backend=none`) :
+    ```
+    sudo mv /etc/NetworkManager/conf.d/90-sent /etc/NetworkManager/conf.d/90-sentinel.conf
+    sudo systemctl reload NetworkManager
+    sudo NetworkManager --print-config | grep firewall-backend
+    ```
+  - Remarque : dès le chargement de l'isolation, wlan0 encore client du Wi-Fi de l'école ne reçoit plus rien (destinations hors `192.168.10.0/24` rejetées en entrée de wlan0) ; sans effet sur SSH (eth0).
+- Blocs C et D : profil `sentinel-ap` créé (`autoconnect no` en attendant les tests), Wi-Fi de l'école désactivé (`autoconnect no`, profil conservé, persisté dans son fichier netplan), `nmcli con up sentinel-ap`.
+  - `iw dev wlan0 info` → `type AP`, `channel 6 (2437 MHz), width: 20 MHz` ; `nmcli dev status` → `wlan0 connected sentinel-ap`, eth0 inchangé ; `ip -br addr` → `wlan0 192.168.10.10/24`.
+  - `nmcli con show sentinel-ap` : `band bg`, `ap-isolation 1 (true)`, `key-mgmt wpa-psk`, `proto rsn`, `pairwise/group ccmp`, `pmf 1 (disable)`, `ipv4.method shared`, `shared-dhcp-range 192.168.10.100,192.168.10.199`, `ipv6.method disabled`.
+  - dnsmasq lancé par NetworkManager sous `nobody`, `--listen-address=192.168.10.10 --dhcp-range=192.168.10.100,192.168.10.199,3600`, `--conf-dir=/etc/NetworkManager/dnsmasq-shared.d` ; `ss` : UDP 67 seul, **rien sur le port 53** (`port=0` effectif).
+  - Routes : une seule route par défaut (eth0) ; `192.168.10.0/24 dev wlan0` ; la 2ᵉ route par défaut via le Wi-Fi de l'école a disparu.
+  - Depuis le Pi : `openssl s_client -connect 192.168.10.10:8883 -verify_ip 192.168.10.10` → TLSv1.3, `Verify return code: 0 (ok)`.
+- **Incident : NAT ajouté par NetworkManager malgré `firewall-backend=none`.** `sudo nft list ruleset | grep masquerade` montre, en plus des 2 règles Docker, `ip saddr 192.168.10.0/24 ip daddr != 192.168.10.0/24 masquerade` dans une table `ip nm-shared-wlan0` :
+  ```
+  table ip nm-shared-wlan0 {
+    chain nat_postrouting { ... ip saddr 192.168.10.0/24 ip daddr != 192.168.10.0/24 masquerade }
+    chain filter_forward  { ... ip saddr 192.168.10.0/24 iifname "wlan0" accept ; iifname "wlan0" oifname "wlan0" accept ; ... reject }
+  }
+  ```
+  - Cause : `systemctl reload NetworkManager` n'a pas appliqué `firewall-backend` au démon en cours ; `NetworkManager --print-config` relit les fichiers, pas l'état du démon. Le démon était donc encore en détection automatique lors du `nmcli con up sentinel-ap`.
+  - Impact : **isolation maintenue**. Un `accept` dans une table n'annule pas un `drop` d'une autre : `sentinel_isolation` rejette déjà en `prerouting` (priorité raw, avant tout NAT) tout ce qui vient de wlan0 hors `192.168.10.0/24`, et en `forward` (priorité -10, avant `filter_forward`) `wlan0 → eth0`. La chaîne `FORWARD` IPv4 de Docker est en plus en `policy drop`. La défense en profondeur a joué son rôle.
+  - Correction retenue : redémarrage (NetworkManager démarre avec `firewall-backend=none`, les règles nft non persistantes disparaissent) plutôt qu'un `systemctl restart NetworkManager` à chaud, qui gère aussi eth0 (risque de coupure SSH). Vérification après redémarrage : `sudo nft list tables` sans `nm-shared-wlan0`.
+- **Incident : route parasite.** Une commande destinée au **client** de test (`ip route add 192.168.41.0/24 via 192.168.10.10`, pour forcer le passage par le Pi) a été lancée par erreur sur le Pi : elle détournait le réseau de l'école vers wlan0. Supprimée par l'admin ; `ip route` vérifié propre (une seule route par défaut via eth0, `192.168.41.0/24 dev eth0`, `192.168.10.0/24 dev wlan0`). Leçon : préfixer les commandes destinées au client par l'hôte où les lancer.
+- Contrôles après incident : `ip route get 192.168.41.52` → `dev eth0 src 192.168.41.123` ✅ ; `openssl s_client` sur `192.168.10.10:8883` et `192.168.41.123:8883` → TLSv1.3, `Verify return code: 0 (ok)` ✅ ; 3 conteneurs actifs, db `healthy`.
+- Mosquitto recréé (`docker compose up -d mosquitto`) : publie `192.168.10.10:8883` **avant** que l'IP existe (`ss -ltn` → `LISTEN 192.168.10.10:8883`), grâce à `ip_nonlocal_bind` ; `192.168.41.123:8883` → `Verify return code: 0 (ok)`.
+
+- Bloc E : `sudo nmcli con modify sentinel-ap connection.autoconnect yes`, puis `sudo reboot` (redémarrage de contrôle, qui corrige aussi la table `nm-shared-wlan0`).
+
+### Vérification après redémarrage (démarrage 15:21:19)
+
+| Contrôle | Résultat |
+|---|---|
+| Tables nft (`sudo nft list tables`) | ✅ `inet sentinel_isolation` + tables Docker, **plus de `nm-shared-wlan0`** |
+| `masquerade` | ✅ uniquement `172.17.0.0/16` et `172.19.0.0/16` (Docker), rien pour `192.168.10.0/24` |
+| Ordre de démarrage | ✅ `sentinel-isolation` 15:21:22 → `NetworkManager` 15:21:27 → `docker` 15:21:38 |
+| AP | ✅ `type AP`, canal 6, 20 MHz ; `wlan0 connected sentinel-ap` (autoconnect `yes`) ; dnsmasq actif |
+| Routes | ✅ une seule route par défaut (eth0), pas de route parasite ; `ip route get 192.168.41.52` → `dev eth0` |
+| sysctl | ✅ `ip_nonlocal_bind = 1`, `ip_forward = 1` (Docker) |
+| Conteneurs | ✅ 3 actifs, db `healthy` ; Mosquitto publie `192.168.10.10:8883`, `192.168.41.123:8883`, `192.168.41.123:1883` ; limites 128M / 64M / 512M |
+| MQTTS | ✅ `openssl s_client` sur `192.168.10.10:8883` et `192.168.41.123:8883` → `Verify return code: 0 (ok)` |
+| Alimentation | ✅ `throttled=0x0`, `57.1'C` |
+
+Reste à faire côté client (admin) : connexion d'un téléphone/PC au Wi-Fi, bail dans `.100`–`.199` sans passerelle ni DNS, `s_client` sur `192.168.10.10:8883`, 1883 injoignable, échec vers le réseau de l'école, `192.168.41.123:22` et internet (avec routes forcées **sur le client** via `192.168.10.10`).
+
+### Retour arrière
+
+```
+sudo nmcli con down sentinel-ap; sudo nmcli con modify sentinel-ap connection.autoconnect no
+sudo nmcli con modify netplan-wlan0-myDiL connection.autoconnect yes; sudo nmcli con up netplan-wlan0-myDiL
+sudo systemctl disable --now sentinel-isolation; sudo nft delete table inet sentinel_isolation
+sudo rm /etc/NetworkManager/conf.d/90-sentinel.conf /etc/NetworkManager/dnsmasq-shared.d/sentinel-ap.conf /etc/sysctl.d/90-sentinel.conf
+sudo systemctl reload NetworkManager; sudo sysctl -w net.ipv4.ip_nonlocal_bind=0
+```
+
 ### Reste à faire
 
 - [x] Activer le cgroup mémoire (`cgroup_enable=memory`, sudo + reboot) et vérifier les limites.
 - [x] PKI : listener 8883/TLS en place et testé.
 - [ ] Supprimer le listener 1883 (conf + compose) dès que DEV a validé le TLS sur l'ESP, avant le pentest de jeudi.
 - [ ] Remettre `ca.crt` à DEV ; proposer un serveur NTP local si le réseau de la table n'a pas d'internet.
-- [ ] IP fixe 192.168.10.10 (puis lier les ports à cette IP), désactivation de wlan0.
+- [x] Point d'accès Wi-Fi isolé (blocs A à E, redémarrage de contrôle).
+- [ ] Tests depuis un client Wi-Fi (bail DHCP, 8883, isolation vers l'école et internet).
+- [ ] Matrice de sécurité : `ip_nonlocal_bind=1`, PSK transitoire en argument de `nmcli`, groupe `docker`.
+- [ ] UFW : autoriser le DHCP sur wlan0 (`udp/67`), NetworkManager ne le fait plus (`firewall-backend=none`).
 - [x] `.gitignore` : `*.csr`, `*.srl`, `pki/`, `infra/mosquitto/certs/`, `infra/mosquitto/data/`, `infra/mosquitto/log/` couverts (`git check-ignore`).
 - [ ] Hardening UFW / SSH, monitoring.
