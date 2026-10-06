@@ -15,7 +15,6 @@ def export_to_onnx():
         print("Export de YOLOv8n vers ONNX...")
         model = YOLO("yolov8n.pt")
         model.export(format="onnx", imgsz=640, optimise=True)
-        # Déplacement du fichier généré vers models/
         exported_file = Path("yolov8n.onnx")
         if exported_file.exists():
             exported_file.rename(ONNX_PATH)
@@ -45,7 +44,6 @@ def run_benchmark(device_index: int = 0, num_frames: int = 150):
 
         start_time = time.perf_counter()
 
-        # Pré-traitement de la frame pour l'entrée ONNX
         img = cv2.resize(frame, (640, 640))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
