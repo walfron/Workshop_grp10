@@ -257,11 +257,75 @@ sentinel-db-1          0.01%   21.08MiB / 512MiB
 
 **Re-test MQTT** (même protocole que ci-dessus, identifiants passés au conteneur jetable par `--env-file .env`, jamais affichés) : les 4 cas sont conformes (message reçu avec login ; `not authorised` rc=5 sans login et avec mauvais mot de passe ; publication de `ia` sur `telemetry` ignorée par l'ACL).
 
+## 2026-10-06 — MQTTS : listener 8883 en TLS
+
+### Certificats (`infra/mosquitto/certs/`, non versionné)
+
+Générés sur le PC de l'admin (la CA et `ca.key` n'y quittent pas), copiés sur le Pi : `ca.crt`, `server.crt` (644) et `server.key` (**600, 1883:1883**). `server.key` n'est jamais affiché.
+
+```
+openssl verify -CAfile ca.crt server.crt
+openssl x509 -in server.crt -noout -subject -issuer -dates -ext subjectAltName,extendedKeyUsage,keyUsage
+openssl x509 -in server.crt -noout -pubkey | openssl sha256
+sudo openssl pkey -in server.key -pubout | openssl sha256     # lancé par l'admin (clé lisible par 1883 seulement)
+```
+
+| Contrôle | Résultat |
+|---|---|
+| Chaîne | ✅ `server.crt: OK`, émis par `CN=Sentinel-X CA G10` |
+| Sujet / SAN | ✅ `CN=sentinel.local` ; `IP:192.168.10.10`, `IP:192.168.41.123`, `DNS:sentinel.local` |
+| Validité | ✅ serveur et CA : du 2026-10-06 au 2027-10-06 |
+| Usages | ✅ `TLS Web Server Authentication` ; `Digital Signature, Key Encipherment` |
+| Clé ↔ certificat | ✅ empreintes SHA-256 de la clé publique identiques (`6620e431…5f471238`) |
+| Git | ✅ `infra/mosquitto/certs/` ignoré (`git check-ignore`) |
+
+`IP:192.168.41.123` (IP DHCP actuelle d'eth0) a été ajoutée au SAN pour pouvoir tester le TLS avant le passage en IP fixe.
+
+### Configuration
+
+- `mosquitto.conf` : `listener 8883` + `cafile` / `certfile` / `keyfile` dans `/mosquitto/certs/`, `tls_version tlsv1.2` (= **minimum** TLS 1.2 en Mosquitto 2.0, TLS 1.3 accepté), `require_certificate false` (authentification par login/mot de passe dans le tunnel TLS, pas de certificat client sur l'ESP).
+- Authentification et ACL **communes** aux deux listeners grâce à `per_listener_settings false` (rien à dupliquer).
+- `docker-compose.yml` : port `192.168.41.123:8883:8883` publié, `./infra/mosquitto/certs:/mosquitto/certs:ro` monté en lecture seule.
+- **Listener 1883 conservé temporairement** (décision de l'admin) jusqu'à validation du TLS sur l'ESP par DEV ; commentaires TEMPORAIRE mis à jour dans les deux fichiers.
+
+```
+docker compose up -d     # recrée uniquement mosquitto
+```
+
+Logs : `Opening ipv4 listen socket on port 8883` puis `1883`, `mosquitto version 2.0.22 running`, sans erreur (la clé en 600 est bien lue par l'utilisateur 1883). Mémoire : `2.3MiB / 128MiB`.
+
+### Tests TLS
+
+```
+openssl s_client -connect 192.168.41.123:8883 -CAfile infra/mosquitto/certs/ca.crt -verify_ip 192.168.41.123
+```
+
+| Test | Attendu | Résultat |
+|---|---|---|
+| `s_client` avec `ca.crt` (+ vérification de l'IP dans le SAN) | `Verify return code: 0` | ✅ `0 (ok)`, TLSv1.3, `TLS_AES_256_GCM_SHA384` |
+| `s_client -tls1_2` | accepté | ✅ TLSv1.2, `ECDHE-RSA-AES256-GCM-SHA384`, `0 (ok)` |
+| `s_client -tls1_1` (client forcé en `@SECLEVEL=0`) | refusé par le serveur | ✅ `tlsv1 alert protocol version` (alerte 70) |
+| `s_client` sans `ca.crt` | non approuvé | ✅ `Verify return code: 19` |
+| MQTTS : pub `sentinel` avec login + `--cafile`, sub `backend` | message reçu | ✅ `sentinel/1/telemetry {"temp":23.1,"hum":40}` |
+| MQTTS : pub sans login | refusé | ✅ `Connection Refused: not authorised` (rc=5) |
+| MQTTS : pub sans la CA | refusé côté client | ✅ `Protocol error` (rc=14) |
+
+Sans `@SECLEVEL=0`, c'est le client OpenSSL 3 du Pi qui refuse TLS 1.1 (`no protocols available`) : ce premier test ne prouvait rien sur le serveur, d'où le second.
+
+Tests MQTT lancés dans un conteneur jetable `eclipse-mosquitto:2.0.22` (`--network host --cap-drop ALL`, `ca.crt` monté en lecture seule, identifiants passés par `--env-file .env`, jamais affichés).
+
+**À transmettre à DEV (ESP8266)** : `ca.crt` uniquement (certificat public, aucun secret), port 8883, hôte `192.168.10.10` ou `sentinel.local` ; l'ESP doit avoir l'heure (NTP) pour valider le certificat.
+
+### Correction : logs Mosquitto
+
+L'entrée « `/mosquitto/log` en volume anonyme » était erronée : `log_dest stdout` envoie les logs au driver Docker `json-file` (rotation 10 Mo × 3 via `daemon.json`, consultation par `docker compose logs mosquitto`). Le volume anonyme vient de la directive `VOLUME` de l'image et reste vide. Pour le monitoring : taille de `docker inspect -f '{{.LogPath}}' sentinel-mosquitto-1` (lecture root).
+
 ### Reste à faire
 
 - [x] Activer le cgroup mémoire (`cgroup_enable=memory`, sudo + reboot) et vérifier les limites.
-- [ ] Logs Mosquitto : `/mosquitto/log` est actuellement un volume anonyme Docker (pas de bind sur `infra/mosquitto/log/`) → à corriger pour le monitoring de la taille des logs.
-- [ ] PKI : passage en 8883/TLS, suppression de 1883 et de cette exception.
-- [ ] IP fixe 192.168.10.10, désactivation de wlan0.
-- [ ] `.gitignore` : ajouter `*.csr`, `*.srl`, `pki/`, `infra/mosquitto/certs/`, `infra/mosquitto/data/`, `infra/mosquitto/log/`.
+- [x] PKI : listener 8883/TLS en place et testé.
+- [ ] Supprimer le listener 1883 (conf + compose) dès que DEV a validé le TLS sur l'ESP, avant le pentest de jeudi.
+- [ ] Remettre `ca.crt` à DEV ; proposer un serveur NTP local si le réseau de la table n'a pas d'internet.
+- [ ] IP fixe 192.168.10.10 (puis lier les ports à cette IP), désactivation de wlan0.
+- [x] `.gitignore` : `*.csr`, `*.srl`, `pki/`, `infra/mosquitto/certs/`, `infra/mosquitto/data/`, `infra/mosquitto/log/` couverts (`git check-ignore`).
 - [ ] Hardening UFW / SSH, monitoring.
