@@ -1,0 +1,93 @@
+# Sentinel-X — pile du Raspberry Pi 5 (PC Serveur Local)
+# Secrets : uniquement via .env (non versionné, voir .env.example)
+# Règles : pas de privileged, pas de socket Docker monté, no-new-privileges,
+#          cap_drop ALL, utilisateurs non-root, limites mémoire/CPU
+#          (marge gardée pour le futur conteneur IA / YOLO).
+
+name: sentinel
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    user: "1883:1883"
+    restart: unless-stopped
+    # TEMPORAIRE : passer en 8883/TLS avant jeudi
+    # (remplacer par "192.168.10.10:8883:8883" + monter ./infra/mosquitto/certs:/mosquitto/certs:ro)
+    # Lié à l'IP d'eth0 uniquement : les ports publiés par Docker contournent UFW.
+    ports:
+      - "192.168.41.123:1883:1883"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./infra/mosquitto/acl:/mosquitto/config/acl:ro
+      - ./infra/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./infra/mosquitto/data:/mosquitto/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.50"
+          pids: 100
+    networks: [mqtt]
+
+  db:
+    # PostgreSQL 16 : choix à confirmer avec DEV
+    image: postgres:16-alpine
+    user: "70:70"            # utilisateur postgres de l'image alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER manquant dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB manquant dans .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Aucun port publié : joignable uniquement par l'API sur le réseau interne "db"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+          pids: 200
+    networks: [db]
+
+  api:
+    # PLACEHOLDER en attendant l'image de DEV (backend REST/WebSocket)
+    image: traefik/whoami:v1.11.0
+    command: ["--port", "8080"]
+    user: "65534:65534"
+    restart: unless-stopped
+    # Local uniquement pour les tests ; l'exposition finale se fera en 443/HTTPS
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.50"
+          pids: 50
+    networks: [mqtt, db]
+
+networks:
+  mqtt: {}
+  db:
+    internal: true   # pas de sortie vers l'extérieur ni de port publiable
+
+volumes:
+  db-data:
