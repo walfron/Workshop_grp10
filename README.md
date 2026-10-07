@@ -26,7 +26,8 @@ Variante retenue : **Option A (Raspberry Pi 5 embarqué)**.
 |---|---|---|
 | `firmware/` | Code C++ de l'ESP8266 (PlatformIO) | DEV |
 | `backend/` | API REST/WebSocket (`POST /api/v1/alerts`) | DEV |
-| `dashboard/` | Interface web de supervision | DEV |
+| `frontend/` | Dashboard web de supervision (React) | DEV |
+| `scripts/` | Scripts d'installation, de lancement et d'arrêt | DEV |
 | `ai/` | Détection d'intrus (webcam) + détection d'anomalies | IA |
 | `infra/` | Config Mosquitto, plan réseau, hardening | INFRA |
 | `cad/` | Fichiers Fusion360 du boîtier + gravure laser | Toute l'équipe |
@@ -42,6 +43,49 @@ docker compose up -d --build
 ```
 
 Le dashboard est accessible sur `http://<IP-du-Pi>:<port>`.
+
+## Lancer le backend et le dashboard
+
+### 1. Installer Node.js (première fois uniquement)
+
+Il faut **Node.js 22.13 ou plus récent** (version LTS recommandée). npm est installé avec Node.js.
+
+- **Windows** : installer la version LTS, puis rouvrir le terminal.
+  ```bash
+  winget install OpenJS.NodeJS.LTS
+  ```
+  Ou télécharger l'installeur LTS sur [nodejs.org](https://nodejs.org).
+- **Linux / Raspberry Pi / macOS** : installer [nvm](https://github.com/nvm-sh/nvm), puis Node.js.
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+  nvm install 24
+  ```
+
+Vérifier l'installation avec `node --version`.
+
+### 2. Installer le projet
+
+À la racine du projet, la première fois puis après un `git pull` qui modifie des dépendances :
+
+```bash
+npm run setup
+```
+
+Cette commande vérifie la version de Node.js, installe les dépendances du backend et du frontend, et crée `backend/.env` et `frontend/.env.local` à partir des modèles `.env.example`.
+
+Renseigner ensuite dans `backend/.env` le mot de passe du compte MQTT `backend` (`MQTT_PASSWORD`, transmis en privé par l'Infra).
+
+### 3. Lancer
+
+```bash
+npm start
+```
+
+- Dashboard : <http://localhost:5173>
+- API : <http://localhost:3000/api/v1/health>
+- Arrêter : `Ctrl+C` dans le terminal, ou `npm run stop` depuis un autre terminal.
+
+Le PC doit être sur le même réseau que le broker MQTT (Wi-Fi myDiL, broker `192.168.41.123`). `npm start` refuse de démarrer si les ports 3000 ou 5173 sont déjà utilisés : lancer `npm run stop` d'abord.
 
 ## Réseau
 

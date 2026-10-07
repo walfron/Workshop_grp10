@@ -5,8 +5,9 @@ const HISTORY_SIZE = 60
 const MAX_ALERTS = 50
 const OFFLINE_AFTER_MS = 5000
 const ALERT_WINDOW_MS = 30000
+const SUPERVISION_TIMEOUT_MS = 90000
 
-const initialState = { latest: null, history: [], alerts: [], linkUp: false, actuators: {} }
+const initialState = { latest: null, history: [], alerts: [], linkUp: false, actuators: {}, system: null, monitorAlerts: [] }
 
 function reducer(state, message) {
   switch (message.type) {
@@ -19,6 +20,8 @@ function reducer(state, message) {
         latest: message.telemetry.at(-1) ?? null,
         alerts: message.alerts,
         actuators: message.actuators,
+        system: message.system ?? null,
+        monitorAlerts: message.monitorAlerts ?? [],
       }
     case 'telemetry':
       return { ...state, latest: message, history: [...state.history, message].slice(-HISTORY_SIZE) }
@@ -26,6 +29,10 @@ function reducer(state, message) {
       return { ...state, alerts: [message, ...state.alerts].slice(0, MAX_ALERTS) }
     case 'actuators':
       return { ...state, actuators: message.state }
+    case 'system':
+      return { ...state, system: message.system }
+    case 'monitorAlerts':
+      return { ...state, monitorAlerts: message.alerts }
     default:
       return state
   }
@@ -86,11 +93,14 @@ export function useSentinel() {
 
   const deviceOnline = state.latest !== null && now - state.latest.ts < OFFLINE_AFTER_MS
   const presence = deviceOnline && state.latest.presence
+  const lastSystemTs = Date.parse(state.system?.ts)
+  const supervisionOnline = Number.isFinite(lastSystemTs) && now - lastSystemTs < SUPERVISION_TIMEOUT_MS
 
   return {
     ...state,
     deviceOnline,
     presence,
+    supervisionOnline,
     threatLevel: getThreatLevel(state.alerts, presence, now),
     sendCommand,
   }

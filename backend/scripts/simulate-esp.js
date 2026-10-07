@@ -8,7 +8,7 @@ const client = mqtt.connect(process.env.MQTT_URL || 'mqtt://localhost:1883', {
 })
 
 const sensors = { temperature: 23, humidity: 42, gas: 300, presence: false }
-const actuators = { buzzer: false, led_red: false, led_orange: false, led_green: true }
+const actuators = { buzzer: false, led_red: false, led_green: true }
 let gasSpikeTicks = 0
 
 const drift = (amplitude) => (Math.random() - 0.5) * amplitude

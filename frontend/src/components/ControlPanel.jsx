@@ -1,6 +1,5 @@
 const LEDS = [
   { key: 'led_red', label: 'LED rouge', color: '#ef4444' },
-  { key: 'led_orange', label: 'LED orange', color: '#f5a524' },
   { key: 'led_green', label: 'LED verte', color: '#2ecc71' },
 ]
 

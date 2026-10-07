@@ -7,7 +7,7 @@ export const bus = new EventEmitter()
 export const device = {
   lastTelemetry: null,
   online: false,
-  actuators: { buzzer: false, led_red: false, led_orange: false, led_green: false },
+  actuators: { buzzer: false, led_red: false, led_green: false },
 }
 
 function toNumber(value) {
