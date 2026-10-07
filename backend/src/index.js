@@ -20,7 +20,7 @@ const app = express()
 app.disable('x-powered-by')
 app.use(express.json({ limit: '10kb' }))
 app.use('/api/v1', api)
-app.use(express.static(resolve(import.meta.dirname, '../../dashboard/dist')))
+app.use(express.static(resolve(import.meta.dirname, '../../frontend/dist')))
 app.use((error, req, res, next) => {
   if (!error.status) console.error(error)
   res.status(error.status ?? 500).json({ error: error.status ? 'Requête invalide' : 'Erreur interne' })

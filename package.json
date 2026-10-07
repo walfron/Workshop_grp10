@@ -1,0 +1,13 @@
+{
+  "name": "sentinel-x",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "setup": "node scripts/sentinel.mjs setup",
+    "start": "node scripts/sentinel.mjs start",
+    "stop": "node scripts/sentinel.mjs stop"
+  }
+}
