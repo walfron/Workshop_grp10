@@ -50,5 +50,5 @@ export function saveAlert(alert) {
 }
 
 export function recentAlerts(limit) {
-  return selectAlerts.all(limit).map((row) => ({ ...row }))
+  return selectAlerts.all(limit)
 }

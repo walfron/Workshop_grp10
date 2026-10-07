@@ -3,25 +3,36 @@ const isHealthy = ({ state, health }) => state === 'running' && (health === null
 export default function ContainerList({ containers }) {
   return (
     <section className="card">
-      <header className="card-header">
+      <div className="card-header">
         <h2>Conteneurs Docker</h2>
         <span className="muted">{containers.length}</span>
-      </header>
+      </div>
       {containers.length === 0 ? (
-        <p className="placeholder">Aucun conteneur signalé</p>
+        <p className="card-body muted">Aucun conteneur signalé</p>
       ) : (
-        <ul className="container-list">
-          {containers.map((container, index) => (
-            <li key={`${container.name}-${index}`} className={`tone-${isHealthy(container) ? 'ok' : 'critical'}`}>
-              <span className="dot" />
-              <span className="container-name">{container.name ?? '—'}</span>
-              <span className="muted">{[container.state, container.health].filter(Boolean).join(' · ') || '—'}</span>
-              <span className="muted">
-                {Number.isFinite(container.restarts) ? `${container.restarts} redémarrage(s)` : '—'}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>État</th>
+              <th>Redémarrages</th>
+            </tr>
+          </thead>
+          <tbody>
+            {containers.map((container, index) => (
+              <tr key={`${container.name}-${index}`}>
+                <td>{container.name ?? '—'}</td>
+                <td>
+                  <span className={`badge ${isHealthy(container) ? 'ok' : 'critical'}`}>
+                    <span className="dot" />
+                    {[container.state, container.health].filter(Boolean).join(', ') || '—'}
+                  </span>
+                </td>
+                <td>{Number.isFinite(container.restarts) ? container.restarts : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </section>
   )

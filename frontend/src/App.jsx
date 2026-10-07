@@ -3,7 +3,6 @@ import NavBar from './components/NavBar.jsx'
 import { useSentinel } from './hooks/useSentinel.js'
 import DashboardPage from './pages/DashboardPage.jsx'
 import ServerPage from './pages/ServerPage.jsx'
-import './App.css'
 
 const PAGES = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -17,9 +16,7 @@ export default function App() {
   return (
     <div className="layout">
       <NavBar pages={PAGES} currentPage={currentPage} onNavigate={setCurrentPage} />
-      <main className="content">
-        {currentPage === 'dashboard' ? <DashboardPage {...sentinel} /> : <ServerPage {...sentinel} />}
-      </main>
+      <main>{currentPage === 'dashboard' ? <DashboardPage {...sentinel} /> : <ServerPage {...sentinel} />}</main>
     </div>
   )
 }

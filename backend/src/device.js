@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events'
 import { config } from './config.js'
 import { saveAlert, saveTelemetry } from './db.js'
 
+const ONLINE_CHECK_MS = 2000
+
 export const bus = new EventEmitter()
 
 export const device = {
@@ -52,5 +54,5 @@ export function watchDeviceOnline() {
     device.online = online
     if (online) createAlert('info', 'backend', 'Boîtier Sentinel-X connecté')
     else createAlert('critical', 'backend', 'Boîtier Sentinel-X hors ligne (plus aucune donnée)')
-  }, 2000)
+  }, ONLINE_CHECK_MS)
 }

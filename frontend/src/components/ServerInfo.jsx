@@ -49,7 +49,7 @@ export default function ServerInfo({ system }) {
   const power = powerStatus(system.throttled)
 
   return (
-    <section className="status-panel">
+    <div className="tiles">
       <StatusTile label="CPU" value={format(system.cpu_pct, ' %')} tone={toneFor(system.cpu_pct, THRESHOLDS.cpu)} />
       <StatusTile
         label="RAM"
@@ -80,6 +80,6 @@ export default function ServerInfo({ system }) {
         value={formatUptime(system.uptime_s)}
         tone={isNumber(system.uptime_s) ? 'ok' : 'unknown'}
       />
-    </section>
+    </div>
   )
 }

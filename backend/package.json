@@ -4,7 +4,6 @@
   "description": "API REST + WebSocket du PC Serveur Local Sentinel-X : ingestion MQTT, historique, alertes, commandes",
   "private": true,
   "type": "module",
-  "main": "src/index.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env src/index.js",
     "dev": "node --env-file-if-exists=.env --watch src/index.js",

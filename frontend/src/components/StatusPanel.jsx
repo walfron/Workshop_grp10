@@ -10,11 +10,11 @@ export default function StatusPanel({ linkUp, deviceOnline, presence, threatLeve
   const threat = THREATS[threatLevel]
 
   return (
-    <section className="status-panel">
+    <div className="tiles">
       <StatusTile label="Liaison serveur" value={linkUp ? 'Connectée' : 'Coupée'} tone={linkUp ? 'ok' : 'critical'} />
-      <StatusTile label="Boîtier Sentinel-X" value={deviceOnline ? 'En ligne' : 'Hors ligne'} tone={deviceOnline ? 'ok' : 'critical'} />
-      <StatusTile label="Présence (PIR)" value={presence ? 'Détectée' : 'Aucune'} tone={presence ? 'warning' : 'ok'} />
+      <StatusTile label="Boîtier" value={deviceOnline ? 'En ligne' : 'Hors ligne'} tone={deviceOnline ? 'ok' : 'critical'} />
+      <StatusTile label="Présence" value={presence ? 'Détectée' : 'Aucune'} tone={presence ? 'warning' : 'ok'} />
       <StatusTile label="Niveau d'alerte" value={threat.label} tone={threat.tone} />
-    </section>
+    </div>
   )
 }

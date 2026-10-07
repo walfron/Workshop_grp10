@@ -8,16 +8,17 @@ export default function WebcamPanel() {
 
   return (
     <section className="card">
-      <header className="card-header">
-        <h2>Webcam (vision IA)</h2>
-        {live && <span className="live-badge">LIVE</span>}
-      </header>
-      <div className="webcam">
-        {live ? (
-          <img src={WEBCAM_URL} alt="Flux webcam analysé par l'IA" onError={() => setFailed(true)} />
-        ) : (
-          <p className="placeholder">{WEBCAM_URL ? 'Flux webcam injoignable' : 'Flux webcam non configuré'}</p>
-        )}
+      <div className="card-header">
+        <h2>Webcam</h2>
+      </div>
+      <div className="card-body">
+        <div className="webcam">
+          {live ? (
+            <img src={WEBCAM_URL} alt="Flux webcam analysé par l'IA" onError={() => setFailed(true)} />
+          ) : (
+            <p className="muted">{WEBCAM_URL ? 'Flux webcam injoignable' : 'Flux webcam non configuré'}</p>
+          )}
+        </div>
       </div>
     </section>
   )

@@ -26,10 +26,8 @@ function toContainer(container) {
 export function handleSystem(data) {
   supervision.system = {
     ts: text(data.ts, 40),
-    host: text(data.host),
     uptime_s: number(data.uptime_s),
     cpu_pct: number(data.cpu_pct),
-    load1: number(data.load1),
     mem_pct: number(data.mem_pct),
     mem_used_mb: number(data.mem_used_mb),
     mem_total_mb: number(data.mem_total_mb),
@@ -49,7 +47,7 @@ export function handleMonitorAlert(data) {
 
   const message = text(data.message, 200) ?? `Alerte ${check}`
   if (data.state === 'alert') {
-    activeAlerts.set(check, { check, message, value: number(data.value), threshold: number(data.threshold), ts: text(data.ts, 40) })
+    activeAlerts.set(check, { check, message })
     createAlert('warning', 'monitor', message)
   } else if (data.state === 'ok' && activeAlerts.delete(check)) {
     createAlert('info', 'monitor', `Retour à la normale : ${check}`)

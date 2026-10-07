@@ -1,15 +1,13 @@
 export default function NavBar({ pages, currentPage, onNavigate }) {
   return (
-    <nav className="navbar">
-      <div className="brand">
-        <h1>SENTINEL-X</h1>
-      </div>
-      <ul className="nav-links">
+    <nav>
+      <strong className="brand">Sentinel-X</strong>
+      <ul>
         {pages.map(({ id, label }) => (
           <li key={id}>
             <button
               type="button"
-              className={`nav-link ${id === currentPage ? 'active' : ''}`}
+              className={id === currentPage ? 'active' : undefined}
               aria-current={id === currentPage ? 'page' : undefined}
               onClick={() => onNavigate(id)}
             >
