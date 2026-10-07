@@ -29,3 +29,5 @@ pki/
 infra/mosquitto/certs/
 infra/mosquitto/data/
 infra/mosquitto/log/
+**/credentials.h
+firmware/include/secrets.h
