@@ -1,0 +1,54 @@
+# Sentinel-X — agent de supervision du Pi (publie en MQTTS, n'ouvre aucun port)
+# Installé dans /etc/systemd/system/sentinel-monitor.service
+# Tourne sous l'utilisateur sentinel (non root). Groupes hérités de l'utilisateur :
+#   docker (docker ps / inspect), video (vcgencmd), adm (journalctl --disk-usage).
+# Le groupe docker est équivalent root (risque R1 de la matrice) : l'agent ne fait
+# que lire l'état des conteneurs ; seul message reçu = un entier ($SYS).
+[Unit]
+Description=Sentinel-X : agent de supervision (MQTTS sentinel/<id>/system et alerts)
+Documentation=file:///home/sentinel/Workshop_grp10/infra/monitoring/README.md
+After=network-online.target docker.service chrony.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/Workshop_grp10
+ExecStart=/usr/bin/python3 -I /home/sentinel/Workshop_grp10/infra/monitoring/sentinel_monitor.py
+Restart=always
+RestartSec=10
+# Le CLI Docker ne doit rien écrire dans ~/.docker (home en lecture seule)
+Environment=DOCKER_CONFIG=/tmp/docker-cli
+Environment=PYTHONUNBUFFERED=1
+
+# Ressources (marge pour le conteneur IA)
+MemoryMax=64M
+CPUQuota=10%
+Nice=10
+
+# Durcissement
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

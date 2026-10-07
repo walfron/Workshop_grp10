@@ -2,7 +2,7 @@
 .env
 *.key
 *.pem
-infra/mosquitto/passwd
+infra/mosquitto/**/passwd*
 firmware/include/config.h
 
 # Python / Node
