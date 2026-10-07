@@ -19,7 +19,6 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <h1>SENTINEL-X</h1>
-        <p className="subtitle">Centre de commandement tactique · AetherCorp</p>
       </header>
 
       <StatusPanel

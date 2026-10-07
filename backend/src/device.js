@@ -10,7 +10,10 @@ export const device = {
   actuators: { buzzer: false, led_red: false, led_orange: false, led_green: false },
 }
 
-const toNumber = (value) => (Number.isFinite(value) ? value : null)
+function toNumber(value) {
+  const number = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return Number.isFinite(number) ? number : null
+}
 
 export function createAlert(level, source, message) {
   const alert = saveAlert({ ts: Date.now(), level, source, message })
