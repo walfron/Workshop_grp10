@@ -51,7 +51,16 @@ Gravité / probabilité : F (faible), M (moyenne), É (élevée). Aucun secret d
 | `sentinel` + nouveau mot de passe → reçu par `backend` | ✅ |
 | `ia` (inchangé) sur `sentinel/1/alerts` | ✅ |
 
-**Constat dans les logs Mosquitto (depuis 12:24 UTC)** : 5 couples machine/compte du **réseau de l'école** se sont connectés **en clair sur 1883** : `192.168.41.121` (`sentinel`), `.124` (`backend` + `sentinel`), `.125` (`sentinel`), `.52` (`backend`, MQTT Explorer). Après la rotation, `.125` (et des clients `mqttjs`) sont refusés en boucle. Machines à identifier (membres de l'équipe ?).
+**Constat dans les logs Mosquitto (depuis 12:24 UTC)** : 5 couples machine/compte du **réseau de l'école** se sont connectés **en clair sur 1883** : `192.168.41.121` (`sentinel`), `.124` (`backend` + `sentinel`), `.125` (`sentinel`), `.52` (`backend`, MQTT Explorer). Après la rotation, `.125` (et des clients `mqttjs`) sont refusés en boucle. **Identification (admin, 2026-10-07)** : toutes ces machines appartiennent à l'équipe.
+
+| Machine | Rôle | Compte attendu | Comptes vus dans les logs |
+|---|---|---|---|
+| `192.168.41.121` | ESP8266 (client `sentinelx-g10`) | `sentinel` | `sentinel` ✅ |
+| `192.168.41.124` | poste DEV (backend / dashboard, `mqttjs`) | `backend` | `backend` ✅, et `sentinel` le 2026-10-06 (outil de diagnostic `diag-p-*`) ⚠️ |
+| `192.168.41.125` | poste IA | `ia` | `ia` ✅ (2026-10-07), et `sentinel` le 2026-10-06 ⚠️ |
+| `192.168.41.52` | poste admin (MQTT Explorer) | `backend` (lecture) | `backend` ✅ |
+
+Aucune connexion d'une machine inconnue : pas d'exploitation constatée du mot de passe publié. Écart au moindre privilège : DEV et IA ont utilisé le compte des capteurs (`sentinel`) pour leurs tests → chacun utilise désormais son propre compte (`backend`, `ia`), ce que confirment les logs du 2026-10-07.
 → Le 1883 en clair (R2) a exposé les mots de passe `sentinel` **et `backend`** à toute écoute sur le réseau de l'école : `backend` est à considérer comme potentiellement compromis (rotation proposée).
 
 **Mesures préventives** :

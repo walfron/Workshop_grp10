@@ -533,10 +533,55 @@ Leçons : chaîner les étapes en `set -e` ; monter un **dossier** de configurat
 | Ressources | ✅ 15 Mo (pic 30 Mo / 64 Mo), 0,66 s CPU en ~3 min 30 |
 | `systemd-analyze security sentinel-monitor` | ✅ exposition **2.0 OK** |
 
+## 2026-10-07 — Migration vers le dossier de configuration Mosquitto
+
+Objectif : qu'un `git pull` (qui remplace les fichiers, donc leur inode) suivi d'un `SIGHUP` suffise à appliquer une nouvelle ACL, sans redémarrer Mosquitto (cf. incident SIGHUP / inode ci-dessus).
+
+### Changements versionnés (PR #5 et #6, `7ea0777`)
+
+- `infra/mosquitto/mosquitto.conf` et `acl` → `infra/mosquitto/config/` (`git mv`, contenu inchangé) ; `passwd` (non versionné) déplacé à la main dans `config/`.
+- `docker-compose.yml` : un seul montage `./infra/mosquitto/config:/mosquitto/config:ro` au lieu de trois fichiers isolés. Chemins inchangés dans le conteneur (`mosquitto.conf` non modifié).
+- `.gitignore` : `infra/mosquitto/**/passwd*` (ancien et nouvel emplacement, `passwd.new`, `passwd.bak`).
+
+### Groupe hôte `mosquitto-ct` (GID 1883)
+
+Avec `acl` en `640 1883:1883`, Git (utilisateur `sentinel`) ne pouvait plus lire le fichier : `git status` le marquait modifié et chaque `pull` qui le touchait était refusé. Choix de l'admin : garder `640 1883:1883` (aucun avertissement Mosquitto) et donner la lecture à `sentinel` par un groupe hôte de même GID que le conteneur :
+
+```
+sudo groupadd -g 1883 mosquitto-ct
+sudo usermod -aG mosquitto-ct sentinel      # puis reconnexion SSH
+```
+
+Effet : `sentinel` lit `acl` ; `passwd`, `server.key` et `data/mosquitto.db` (600) restent illisibles ; écriture possible dans le dossier `data/` (775). Risque R18 de la matrice. Une session ouverte avant le `usermod` n'a pas le groupe : `sg mosquitto-ct -c '...'`.
+
+### Application sur le Pi
+
+| Étape | Commande / action | Résultat |
+|---|---|---|
+| 1 | `git status` (avec le groupe) | ✅ propre |
+| 2 | `git pull --ff-only` ; `mv infra/mosquitto/passwd infra/mosquitto/config/passwd` | ✅ `7ea0777` ; `passwd` ignoré (`.gitignore:5`) |
+| 3 | conteneur jetable `--cap-add CHOWN --cap-add FOWNER` : `chown 1883:1883`, `chmod 640 acl`, `chmod 600 passwd` | ✅ |
+| 4 | `docker compose up -d mosquitto` (feu vert admin, équipe prévenue) | ✅ recréé à 09:02:54 UTC, sans erreur ni avertissement ACL |
+| 5a | reconnexion des clients | ✅ en < 3 s : `.121` (`sentinel`), `.124` (`backend`), `.125` (`ia`), `sentinel-monitor` (`monitor`, 8883) |
+| 5b | inodes hôte / conteneur (`stat`) | ✅ identiques pour `acl`, `passwd`, `mosquitto.conf` |
+| 5c | `sentinel-monitor` | ✅ actif, 0 redémarrage ; reconnecté seul, alerte `ok : agent de supervision reconnecté` |
+| 5d | `acl` remplacé par une copie identique (nouvel inode 657185 → 655363, comme un `git pull`), puis `docker compose kill -s HUP mosquitto` | ✅ `Reloading config.` ; **le conteneur voit le nouvel inode** ; clients non coupés |
+| 6 | hook `post-merge` installé et lancé à la main (2 fois) | ✅ `acl` en `640 1883:1883`, SIGHUP, 4 clients toujours connectés ; `git status` propre |
+
+### Hook `post-merge` (local au Pi, non versionné)
+
+`.git/hooks/post-merge` (755), exécuté après chaque `git pull` qui récupère des commits :
+
+1. remet `infra/mosquitto/config/acl` en `640 1883:1883` (conteneur jetable `--network none --cap-drop ALL --cap-add CHOWN --cap-add FOWNER`) ;
+2. si Mosquitto tourne : `docker compose kill -s HUP mosquitto` (rechargement de `acl` et `passwd` sans coupure ; « Killed » dans la sortie de compose = signal envoyé, masqué) ;
+3. avertit si `config/mosquitto.conf` (listeners / ports : `docker compose restart mosquitto`) ou `docker-compose.yml` (`docker compose up -d`) ont changé : un SIGHUP ne suffit pas pour ceux-là.
+
+Non lancé par Git si le `pull` ne récupère rien (« Already up to date »). À réinstaller si le dépôt est recloné.
+
 ### Reste à faire
 
 - [x] Supervision : agent `sentinel-monitor` actif (MQTTS, compte `monitor`), journald limité à 100 Mo.
-- [ ] Montage par dossier `infra/mosquitto/config/` + hook `post-merge` local (procédure prête).
+- [x] Montage par dossier `infra/mosquitto/config/` + groupe `mosquitto-ct` + hook `post-merge` local.
 - [ ] Tester en réel le message de retour à la normale (`state: ok`) d'une alerte.
 - [x] Activer le cgroup mémoire (`cgroup_enable=memory`, sudo + reboot) et vérifier les limites.
 - [x] PKI : listener 8883/TLS en place et testé.
