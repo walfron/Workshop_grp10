@@ -486,8 +486,58 @@ Test à chaud : `date -u` avant/après = `14:07:03` / `14:07:03`, journal : `fak
 - `rtcsync` (chrony) déjà actif : la RTC est recopiée depuis l'heure système tant que le Pi est synchronisé.
 - Avant une coupure volontaire : `sudo poweroff` (sauvegarde à l'arrêt), sinon jusqu'à 1 h de retard.
 
+## 2026-10-07 — Supervision / MCO : agent `sentinel-monitor`
+
+Contrainte : l'équipe teste sur le réseau de l'école → ni réseau, ni pare-feu touchés ; Mosquitto modifié seulement avec feu vert.
+
+### Choix
+
+- Agent Python sur l'**hôte** (`infra/monitoring/sentinel_monitor.py`), service systemd sous `sentinel` (non root), **pas de conteneur** (évite de monter `/proc`, `/sys` et le socket Docker). Publie en **MQTTS** vers `192.168.10.10:8883` : **aucun port ouvert**.
+- `sentinel/1/system` toutes les 30 s (JSON horodaté, retenu) ; `sentinel/1/alerts` uniquement aux changements d'état (`alert` / `ok`), champ `"source": "monitor"` (topic partagé avec l'ESP et l'IA). Testament MQTT si l'agent disparaît.
+- Mesures : CPU (`/proc/stat`), RAM (`MemAvailable`), température, `vcgencmd get_throttled`, disque `/`, conteneurs du projet `sentinel` (`docker ps` / `docker inspect` : état, santé, redémarrages, rotation des logs), `journalctl --disk-usage`, `$SYS/broker/clients/connected`.
+- Seuils : CPU > 90 % pendant 2 min, RAM > 85 %, température > 75 °C, `throttled ≠ 0x0`, disque > 85 %, conteneur arrêté / `unhealthy` / ≥ 3 redémarrages en 10 min, journald > 200 Mo ou conteneur sans rotation. Surchargeables par `MONITOR_*` dans `.env`.
+- **Limite** : les logs Docker (`/var/lib/docker`, 710 root) ne sont pas lisibles par `sentinel` → l'agent publie leur taille **maximale** (`max-size × max-file` = 90 Mo pour 3 conteneurs) et vérifie que la rotation est configurée sur chaque conteneur. L'alerte « > 200 Mo » porte sur journald.
+- L'agent ne lit dans `.env` que `MQTT_MONITOR_*` et `MONITOR_*` (pas les autres secrets, contrairement à un `EnvironmentFile=`).
+
+### Compte MQTT `monitor`
+
+- `.env` : `MQTT_MONITOR_USER=monitor` + mot de passe aléatoire (32 caractères, généré par script, non affiché) ; `.env.example` mis à jour.
+- ACL : `monitor` écrit `sentinel/+/system` et `sentinel/+/alerts`, lit `$SYS/broker/clients/#` ; `backend` lit en plus `sentinel/+/system`.
+- `passwd` : 4 comptes (`$7$`), seul `monitor` ajouté ; `.gitignore` : `infra/mosquitto/passwd` → `infra/mosquitto/passwd*` (couvre `passwd.new`).
+
+### MCO
+
+- Phase A (admin) : `sudo apt-get install --no-install-recommends python3-paho-mqtt` (2.1.0, Debian) ; `journald-90-sentinel.conf` → `/etc/systemd/journald.conf.d/` (`SystemMaxUse=100M`, `SystemMaxFileSize=20M`), `systemctl restart systemd-journald` ; usage 8 Mo.
+- Rotation des logs Docker vérifiée sur les 3 conteneurs : `json-file`, `{"max-file":"3","max-size":"10m"}`.
+
+### Incident : SIGHUP sans effet sur l'ACL (montage de fichier + inode)
+
+Objectif : recharger `acl` et `passwd` sans couper les clients (`docker compose kill -s HUP mosquitto`), en réécrivant les fichiers **en place** (même inode, indispensable avec un montage de fichier isolé).
+
+1. Le `git pull` de 09:59 (PR #4) avait recréé `acl` en `664 1000:1000` (nouvel inode 533606). La réécriture en place par un conteneur UID 1883 a échoué (`Permission denied`) et, la commande n'étant pas en `set -e`, le SIGHUP est parti quand même → rechargement des **mêmes** fichiers, sans effet fonctionnel.
+2. Réécriture refaite en `set -euo pipefail` (`acl` écrit par `sentinel` puis remis en `640 1883:1883`, `passwd` écrit en place par l'UID 1883), puis SIGHUP : `Reloading config`, `passwd` rechargé (compte `monitor` visible), **clients non coupés** (`192.168.41.124:58705` identique avant/après, `netstat` dans le conteneur).
+3. Mais le conteneur voyait toujours l'**ancien inode** de `acl` (539212, démarrage du 6 oct. 14:05) : un montage de fichier isolé est figé sur l'inode du démarrage, le `git pull` l'avait remplacé. → `docker compose restart mosquitto` (feu vert admin) : ACL vue (inode 533606), clients de l'équipe reconnectés en 1–2 s (`.121` `sentinel`, `.124` `backend`).
+
+Leçons : chaîner les étapes en `set -e` ; monter un **dossier** de configuration plutôt que des fichiers (proposition validée, à appliquer) ; remettre les droits de `acl` après chaque `pull` (hook `post-merge` local).
+
+### Tests
+
+| Test | Résultat |
+|---|---|
+| `monitor` publie `sentinel/1/system`, reçu par `backend` | ✅ |
+| `monitor` lit `$SYS/broker/clients/connected` | ✅ (`3`) |
+| `monitor` lit `telemetry` / publie sur `cmd` | ✅ refusés |
+| Agent `--once`, réception par `backend` | ✅ après correction : paho 2.1 n'a pas `tls_context` → contexte TLS construit par l'agent (`create_default_context(cafile)`, TLS 1.2 min, vérification de l'IP du SAN) puis `tls_set_context` |
+| Simulation `MONITOR_TEMP_MAX=40 --once` | ✅ alerte `temp` `alert` reçue par `backend` ; pas de testament (déconnexion propre) |
+| Service activé (`enable --now`) | ✅ actif, 0 redémarrage, messages à 10:24:22, 10:24:52, 10:25:22 (30 s) |
+| Ressources | ✅ 15 Mo (pic 30 Mo / 64 Mo), 0,66 s CPU en ~3 min 30 |
+| `systemd-analyze security sentinel-monitor` | ✅ exposition **2.0 OK** |
+
 ### Reste à faire
 
+- [x] Supervision : agent `sentinel-monitor` actif (MQTTS, compte `monitor`), journald limité à 100 Mo.
+- [ ] Montage par dossier `infra/mosquitto/config/` + hook `post-merge` local (procédure prête).
+- [ ] Tester en réel le message de retour à la normale (`state: ok`) d'une alerte.
 - [x] Activer le cgroup mémoire (`cgroup_enable=memory`, sudo + reboot) et vérifier les limites.
 - [x] PKI : listener 8883/TLS en place et testé.
 - [ ] Supprimer le listener 1883 (conf + compose) dès que DEV a validé le TLS sur l'ESP, avant le pentest de jeudi.
