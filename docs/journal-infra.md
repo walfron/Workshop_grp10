@@ -412,6 +412,80 @@ sudo rm /etc/NetworkManager/conf.d/90-sentinel.conf /etc/NetworkManager/dnsmasq-
 sudo systemctl reload NetworkManager; sudo sysctl -w net.ipv4.ip_nonlocal_bind=0
 ```
 
+## 2026-10-06 — Serveur NTP local (chrony) pour les ESP
+
+Le Wi-Fi de la table n'a pas internet ; sans heure valide, l'ESP8266 refuse le certificat du broker (`notBefore` = 2026-10-06 09:58:54 UTC = `1791280734`).
+
+### État des lieux
+
+- `systemd-timesyncd` actif (pool Debian) ; chrony absent (candidat `4.6.1-3+deb13u2`, dépôt Debian) ; aucun autre démon de temps.
+- DHCP de l'école : **pas de serveur NTP fourni** (`requested_ntp_servers` sans réponse ; DNS 8.8.8.8 / 8.8.4.4 seulement).
+- RTC intégrée du Pi 5 (`/dev/rtc0`, `rpi-rtc`, `hctosys=1` : heure système fixée par la RTC au boot). **Pas de pile sur J5** ; `charging_voltage=0` (charge désactivée).
+- NTS (TCP 4460) joignable depuis eth0 : `time.cloudflare.com`, `ptbtime1.ptb.de` ✅ ; `nts.netnod.se` ❌.
+- 123/udp wlan0 → 192.168.10.10 : autorisé (`sentinel_isolation` ne filtre que les destinations hors `192.168.10.0/24`, pas de chaîne `input`). À ouvrir dans UFW plus tard.
+
+### Configuration (`infra/ntp/chrony.conf` → `/etc/chrony/chrony.conf`)
+
+- Amont via eth0 : 2 serveurs **NTS** (NTP authentifié, contre la falsification de l'heure depuis le réseau de l'école) + repli `2.debian.pool.ntp.org` en `authselectmode mix` + `sourcedir /run/chrony-dhcp` (NTP du DHCP si l'école en fournit un).
+- Sans pile : `nocerttimecheck 1` (1ʳᵉ synchro NTS possible avec une horloge fausse), `makestep 1 -1` (saut autorisé à tout moment, ex. eth0 branché après le boot), `rtcsync`.
+- Service : `bindaddress 192.168.10.10` (grâce à `ip_nonlocal_bind=1`), `allow 192.168.10.0/24`, `local stratum 10` (heure servie sans internet), `ratelimit interval 3 burst 8 leak 2` (DoS).
+- `cmdport 0` : pas de port de commande réseau ; `chronyc` via le socket Unix (root / `_chrony` uniquement).
+
+```
+sudo apt-get install --no-install-recommends chrony      # retire systemd-timesyncd (conflit time-daemon)
+sudo cp -p /etc/chrony/chrony.conf /etc/chrony/chrony.conf.debian
+sudo install -m 644 infra/ntp/chrony.conf /etc/chrony/chrony.conf
+sudo chronyd -p -f /etc/chrony/chrony.conf >/dev/null    # syntaxe OK
+sudo systemctl restart chrony                            # active
+```
+
+- Avertissement `dpkg-statoverride: /var/log/chrony does not exist` : sans effet (aucune directive `log`, journal système).
+- apt signale `chromium-sandbox` devenu inutile : à retirer au hardening (installation minimale avant le pentest).
+- Retour arrière : `sudo apt-get purge chrony && sudo apt-get install systemd-timesyncd`.
+
+### Tests
+
+| Test | Résultat |
+|---|---|
+| `ss -ulpn` | ✅ `192.168.10.10:123` seul ; rien sur `192.168.41.123`, pas de 323 |
+| `chronyc` sans sudo | ✅ `506 Cannot talk to daemon` (pas d'accès réseau ni non-root au contrôle) |
+| Requête NTP vers 192.168.10.10 < 1 min après le restart | ✅ `stratum 10`, refid `127.127.1.1` (`local stratum 10` actif avant synchro) |
+| Même requête ~1 min plus tard | ✅ `stratum 4`, refid `162.159.200.123` |
+| `sudo chronyc tracking` | ✅ stratum 4, `System time 0.000001206 s slow`, `Leap status : Normal` |
+| `sudo chronyc sources` | ✅ `^*` 162.159.200.123 (Cloudflare NTS), `^-` 192.53.103.108 (PTB NTS) ; sources du pool en `^?` (non sélectionnées : non authentifiées) |
+| `sudo chronyc -N authdata` | ✅ `time.cloudflare.com` et `ptbtime1.ptb.de` en mode `NTS`, 0 NAK, cookies 8 et 7 |
+| Client Windows du Wi-Fi : `w32tm /stripchart /computer:192.168.10.10 /dataonly /samples:5` | ✅ 5/5 réponses, écart stable −24 à −29 ms (horloge du PC) |
+
+## 2026-10-06 — Heure sans pile RTC : fake-hwclock (système autonome, sans eth0 à la démo)
+
+Contrainte : le Pi doit fonctionner **sans câble Ethernet** le jour de la démo, y compris après extinction / rallumage. Pas de pile sur J5 : après une coupure d'alimentation, la RTC du Pi 5 perd l'heure → sans eth0, chrony servirait une heure fausse et l'ESP refuserait le certificat (`notBefore` 2026-10-06 09:58:54 UTC).
+
+### Installation
+
+```
+sudo apt-get install --no-install-recommends fake-hwclock     # 0.14, Debian, aucune dépendance, rien de supprimé
+sudo fake-hwclock save                                         # /etc/fake-hwclock.data : 2026-10-06 14:05:16 (UTC)
+```
+
+Unités créées : `fake-hwclock-load.service` (sysinit, avant `systemd-fsck-root`), `fake-hwclock-save.service` (arrêt), `fake-hwclock-save.timer` (horaire, timer systemd et non cron). `fake-hwclock` (ancien script init) est `masked` : normal.
+
+### Problème : fake-hwclock 0.14 fait reculer l'horloge
+
+Le manuel indique que `load` sans `force` n'avance que l'horloge. Le script (`/usr/sbin/fake-hwclock`) fait l'inverse : `FORCE=false` puis `if [ "$FORCE"x = "false"x ] || [ $NOW_SEC -le $SAVED_SEC ]; then date -u -s "$SAVED"` → sans `force`, l'heure est **toujours** remplacée par la sauvegarde, même plus ancienne. Au boot à chaud (RTC exacte), l'heure aurait reculé de quelques secondes (arrêt propre) à 1 h (plantage, dernière sauvegarde horaire).
+
+Correction : drop-in `infra/ntp/fake-hwclock-load-forward.conf` → `/etc/systemd/system/fake-hwclock-load.service.d/forward-only.conf`, qui remplace la commande par un chargement **qui n'avance que** l'horloge, indépendant du bug (et d'une future correction où `force` signifierait « avant ou arrière »).
+
+```
+sudo install -D -m 644 infra/ntp/fake-hwclock-load-forward.conf /etc/systemd/system/fake-hwclock-load.service.d/forward-only.conf
+sudo systemctl daemon-reload
+sudo systemctl start fake-hwclock-load.service
+```
+
+Test à chaud : `date -u` avant/après = `14:07:03` / `14:07:03`, journal : `fake-hwclock: horloge déjà plus récente que la sauvegarde, inchangée` ✅. **Ne jamais lancer `sudo fake-hwclock load` à la main.**
+
+- `rtcsync` (chrony) déjà actif : la RTC est recopiée depuis l'heure système tant que le Pi est synchronisé.
+- Avant une coupure volontaire : `sudo poweroff` (sauvegarde à l'arrêt), sinon jusqu'à 1 h de retard.
+
 ### Reste à faire
 
 - [x] Activer le cgroup mémoire (`cgroup_enable=memory`, sudo + reboot) et vérifier les limites.
@@ -420,7 +494,13 @@ sudo systemctl reload NetworkManager; sudo sysctl -w net.ipv4.ip_nonlocal_bind=0
 - [ ] Remettre `ca.crt` à DEV ; proposer un serveur NTP local si le réseau de la table n'a pas d'internet.
 - [x] Point d'accès Wi-Fi isolé (blocs A à E, redémarrage de contrôle).
 - [ ] Tests depuis un client Wi-Fi (bail DHCP, 8883, isolation vers l'école et internet).
-- [ ] Matrice de sécurité : `ip_nonlocal_bind=1`, PSK transitoire en argument de `nmcli`, groupe `docker`.
+- [ ] Matrice de sécurité : `ip_nonlocal_bind=1`, PSK transitoire en argument de `nmcli`, groupe `docker`, `makestep 1 -1` (saut forgé possible si seul le pool non authentifié répond), pas de pile RTC.
+- [x] Heure sans pile RTC : fake-hwclock installé, chargement « avance seulement » (drop-in).
+- [ ] Test autonome : démarrage à froid sans eth0 (heure, AP, conteneurs, MQTTS, NTP).
+- [ ] Hardening SSH : autoriser 22/tcp sur wlan0 depuis 192.168.10.100–199 uniquement (eth0 absent à la démo) ; garder l'accès eth0 hors démo.
+- [ ] Pile RTC officielle (ML-2020) si achetable : heure exacte sans réseau.
+- [ ] UFW : autoriser `123/udp` sur wlan0 vers 192.168.10.10 (NTP).
+- [ ] Hardening : `apt autoremove` (`chromium-sandbox`).
 - [ ] UFW : autoriser le DHCP sur wlan0 (`udp/67`), NetworkManager ne le fait plus (`firewall-backend=none`).
 - [x] `.gitignore` : `*.csr`, `*.srl`, `pki/`, `infra/mosquitto/certs/`, `infra/mosquitto/data/`, `infra/mosquitto/log/` couverts (`git check-ignore`).
 - [ ] Hardening UFW / SSH, monitoring.
