@@ -21,9 +21,7 @@ services:
       # le Wi-Fi, jusqu'à validation du TLS sur l'ESP par DEV. À SUPPRIMER avant jeudi.
       - "192.168.41.123:1883:1883"
     volumes:
-      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./infra/mosquitto/acl:/mosquitto/config/acl:ro
-      - ./infra/mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./infra/mosquitto/config:/mosquitto/config:ro
       - ./infra/mosquitto/certs:/mosquitto/certs:ro
       - ./infra/mosquitto/data:/mosquitto/data
     read_only: true
