@@ -1,0 +1,13 @@
+# Nmap 7.80 scan initiated Thu Oct 08 11:42:06 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.exe" -Pn -sU -p 67,111,123,5353 -oN wlan0-udp.txt 192.168.10.10
+mass_dns: warning: Unable to determine any DNS servers. Reverse DNS is disabled. Try using --system-dns or specify valid servers with --dns-servers
+Nmap scan report for 192.168.10.10
+Host is up (0.0059s latency).
+
+PORT     STATE         SERVICE
+67/udp   open|filtered dhcps
+111/udp  open|filtered rpcbind
+123/udp  open          ntp
+5353/udp open|filtered zeroconf
+MAC Address: 2C:CF:67:2F:D0:19 (Unknown)
+
+# Nmap done at Thu Oct 08 11:42:08 2026 -- 1 IP address (1 host up) scanned in 2.51 seconds

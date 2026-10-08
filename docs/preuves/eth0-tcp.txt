@@ -1,0 +1,13 @@
+# Nmap 7.80 scan initiated Thu Oct 08 11:32:37 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.exe" -Pn -sS -p- -T4 -oN eth0-tcp.txt 192.168.41.123
+Nmap scan report for 192.168.41.123
+Host is up (0.038s latency).
+Not shown: 65530 filtered ports
+PORT     STATE  SERVICE
+22/tcp   open   ssh
+443/tcp  closed https
+1883/tcp open   mqtt
+8080/tcp closed http-proxy
+8883/tcp open   secure-mqtt
+MAC Address: 2C:CF:67:2F:D0:18 (Unknown)
+
+# Nmap done at Thu Oct 08 11:35:12 2026 -- 1 IP address (1 host up) scanned in 154.62 seconds

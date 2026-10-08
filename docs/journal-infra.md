@@ -592,10 +592,89 @@ Non lancé par Git si le `pull` ne récupère rien (« Already up to date »). �
 - [ ] Matrice de sécurité : `ip_nonlocal_bind=1`, PSK transitoire en argument de `nmcli`, groupe `docker`, `makestep 1 -1` (saut forgé possible si seul le pool non authentifié répond), pas de pile RTC.
 - [x] Heure sans pile RTC : fake-hwclock installé, chargement « avance seulement » (drop-in).
 - [ ] Test autonome : démarrage à froid sans eth0 (heure, AP, conteneurs, MQTTS, NTP).
-- [ ] Hardening SSH : autoriser 22/tcp sur wlan0 depuis 192.168.10.100–199 uniquement (eth0 absent à la démo) ; garder l'accès eth0 hors démo.
+- [x] Hardening SSH : autoriser 22/tcp sur wlan0 depuis 192.168.10.100–199 uniquement (eth0 absent à la démo) ; garder l'accès eth0 hors démo.
 - [ ] Pile RTC officielle (ML-2020) si achetable : heure exacte sans réseau.
-- [ ] UFW : autoriser `123/udp` sur wlan0 vers 192.168.10.10 (NTP).
+- [x] UFW : autoriser `123/udp` sur wlan0 vers 192.168.10.10 (NTP).
 - [ ] Hardening : `apt autoremove` (`chromium-sandbox`).
-- [ ] UFW : autoriser le DHCP sur wlan0 (`udp/67`), NetworkManager ne le fait plus (`firewall-backend=none`).
+- [x] UFW : autoriser le DHCP sur wlan0 (`udp/67`), NetworkManager ne le fait plus (`firewall-backend=none`).
 - [x] `.gitignore` : `*.csr`, `*.srl`, `pki/`, `infra/mosquitto/certs/`, `infra/mosquitto/data/`, `infra/mosquitto/log/` couverts (`git check-ignore`).
-- [ ] Hardening UFW / SSH, monitoring.
+- [x] Hardening UFW / SSH, monitoring.
+
+## 2026-10-08 — Hardening SSH et pare-feu UFW
+
+### SSH : authentification par mot de passe découverte puis supprimée (R19)
+
+- Constat : `Accepted password for sentinel from 192.168.41.125` (poste IA, légitime) le 2026-10-08 à 09:38. `sshd -T` : `passwordauthentication yes`, `permitrootlogin without-password`, `maxauthtries 6`, `logingracetime 120`, `x11forwarding yes`. L'admin se connectait par mot de passe jusqu'au 2026-10-07 14:54 (première clé). Journal sshd non persistant (seulement depuis le boot du 2026-10-07 16:00) : la période du 5 au 7 n'est pas prouvable par les logs.
+- Correctif : `/etc/ssh/sshd_config.d/10-sentinel.conf` (copie `infra/hardening/10-sentinel.conf`, `root:root 644`). Préfixe `10` : lu avant `50-cloud-init.conf`, et OpenSSH garde la première valeur lue.
+  ```
+  sudo install -o root -g root -m 644 infra/hardening/10-sentinel.conf /etc/ssh/sshd_config.d/
+  sudo sshd -t && sudo systemctl reload ssh
+  ```
+- Tests : clé acceptée depuis le PC admin (second terminal) ; `ssh -o PubkeyAuthentication=no` refusé depuis le PC admin et en local (`Permission denied (publickey)` au lieu de `(publickey,password)`). Mot de passe de `sentinel` changé (`passwd`, toujours utilisé pour `sudo`).
+- Clés autorisées (R20) : `admin-sentinel` (`.52`), `ia-sentinel` (`.125`), `dev-sentinel` (`.124`, ajoutée le 2026-10-08 10:17 par DEV depuis une session ouverte, empreinte vérifiée ensuite). Règle : seule l'admin ajoute une clé, après vérification de l'empreinte.
+
+### UFW (`infra/hardening/ufw-sentinel.sh`)
+
+- `sudo apt install ufw` (dépôt Debian), puis le script : entrant refusé par défaut ; 22/tcp en `limit` sur eth0 depuis `.52`, `.124`, `.125` et sur wlan0 depuis `192.168.10.100–199` ; 443/tcp (wlan0 et postes de l'équipe sur eth0) ; 67/udp et 123/udp sur wlan0.
+- Filet de sécurité : `systemd-run --unit=ufw-deadman --on-active=5min /usr/sbin/ufw disable` armé avant `ufw enable` ; arrêté après test (`systemctl stop ufw-deadman.timer`).
+- Tests : SSH par clé depuis le PC admin OK ; MQTT OK (le dashboard DEV reçoit toutes les données).
+- `ufw status verbose` : `deny (incoming), allow (outgoing), deny (routed)`, logging `low`, 14 règles IPv4 conformes au script + `67/udp (v6) on wlan0` ajoutée automatiquement par UFW (inutile : le DHCPv6 utilise 547/udp et aucun IPv6 n'est servi sur wlan0).
+- Les ports publiés par Docker (1883, 8883) ne passent pas par les règles UFW : filtrage dans `DOCKER-USER` (étape suivante).
+
+### DOCKER-USER : 1883 limité à l'équipe
+
+- `infra/hardening/docker-user-1883.sh` (`/usr/local/sbin/`) + `sentinel-docker-user.service` (`After=docker.service`, `PartOf=docker.service` : rechargé au boot et à chaque redémarrage de Docker). Chaîne `SENTINEL-MQTT1883` : `RETURN` pour `.121`, `.124`, `.125`, `.52`, puis `LOG` (6/min, préfixe `SENTINEL-1883-DROP`) et `DROP`. Saut en tête de `DOCKER-USER` sur `-i eth0` et la destination **d'origine** (`--ctorigdst 192.168.41.123 --ctorigdstport 1883`, avant DNAT).
+- Tests : téléphone `192.168.41.82` (hors liste) → connexion 1883 en **timeout**, 6 lignes `SENTINEL-1883-DROP` (SYN, `SRC=192.168.41.82`, `DPT=1883`) dans `journalctl -k` ; `.124` (dashboard DEV) et `.52` (admin) passent toujours.
+- Limite : filtrage par IP source, usurpable sur le même réseau (R21) ; la protection reste l'authentification + ACL, et la suppression du 1883 (R2).
+
+### Services inutiles
+
+- **Constat** : l'OS installé n'est pas la version « Lite » (`lightdm`, `cups`, `wayvnc`, `udisks2` présents).
+- `systemctl disable --now` : `rpcbind` (.socket/.service), `nfs-blkmap`, `avahi-daemon` (.socket/.service), `cups` (.socket/.service), `bluetooth`, `wayvnc-control` ; **masqués** : rpcbind, avahi, cups ; `lightdm` désactivé + `set-default multi-user.target` (effectif au prochain boot).
+- Vérifié (`ss -tuln`) : 111 tcp/udp, 5353/udp et les ports UDP aléatoires (47785, 49049) ont disparu. Restent : 22, 67/udp, 123/udp (wlan0), 1883/8883 (Docker).
+- `apt autoremove --purge` (simulation) propose `chromium-sandbox` mais aussi `python3-protobuf`, `python3-flatbuffers`, `python3-coloredlogs`, `python3-humanfriendly` : dépendances d'`onnxruntime`, utilisé par le script de vision IA lancé sur l'hôte → **ne purger que `chromium-sandbox`**.
+- **Découverte** : `python3 ~/stream_sentinel_finale.py` (IA, lancé depuis `.125` le 2026-10-08 11:05, hors Docker, hors dépôt) écoute en **`0.0.0.0:8080`** (Flask, flux webcam, sans authentification). Non joignable de l'extérieur (UFW n'autorise pas 8080), mais exposé à tout processus local. Il se connecte au MQTT sur `127.0.0.1:1883`, où rien n'écoute (1883 lié à `192.168.41.123` seulement) : à passer en MQTTS `192.168.10.10:8883` (R22).
+
+### Suites (2026-10-08)
+
+- `sudo apt purge chromium-sandbox` (seul paquet purgé, cf. ci-dessus).
+- `DOCKER-USER` étendu au **8883 sur eth0** : `infra/hardening/docker-user-mqtt.sh` (chaîne `SENTINEL-MQTT-ETH0`, sauts 1883 et 8883, préfixe `SENTINEL-MQTT-DROP`, mode `stop` utilisé par l'unité) ; ancien `docker-user-1883.sh` supprimé de `/usr/local/sbin/`. Tests : dashboard DEV OK ; téléphone `.82` sur 8883 en **timeout**. Le 8883 sur wlan0 reste ouvert au Wi-Fi de la table.
+- `sentinel.local` (avahi) : utilisé par personne, toute l'équipe passe par les IP.
+- Flux webcam IA (8080, R22) : ouvert dans UFW par l'admin pour `.124`, `.52` (eth0) et `192.168.10.0/24` (wlan0) ; l'IA corrige le MQTT (8883/TLS) et le mot de passe en dur.
+
+### sysctl (`infra/hardening/sysctl-95-sentinel-hardening.conf`)
+
+- Installé dans `/etc/sysctl.d/95-sentinel-hardening.conf`, appliqué avec filet de sécurité : valeurs d'origine sauvegardées dans `/run/sysctl-avant.conf`, `systemd-run --unit=sysctl-deadman --on-active=5min sysctl -p /run/sysctl-avant.conf`, arrêté après tests (SSH, dashboard DEV données + webcam, téléphone sur le Wi-Fi de la table).
+- Vérifié : les 24 valeurs du fichier sont appliquées. `ip_forward = 1` (Docker) et `ip_nonlocal_bind = 1` (R4) conservés.
+- **Écart** : `eth0` et `wlan0` restent en `rp_filter = 2` (souple). Le noyau applique `max(all, interface)` et systemd pose `net.ipv4.conf.*.rp_filter = 2` sur chaque interface (`/usr/lib/sysctl.d/50-default.conf:26`) ; `all = 1` ne suffit donc pas. Correctif : clés `net.ipv4.conf.eth0.rp_filter = 1` et `net.ipv4.conf.wlan0.rp_filter = 1` ajoutées au fichier, appliquées avec le même filet (retour à 2 sous 5 min, arrêté après tests). Vérifié : `all`, `eth0`, `wlan0` = 1.
+
+### Accès de secours
+
+L'IP d'eth0 est en DHCP (`192.168.41.123` aujourd'hui) et les règles SSH eth0 visent cette adresse. **En cas de changement d'IP DHCP sur eth0**, l'accès de secours passe par le **Wi-Fi de la table** : SSH vers `192.168.10.10` depuis un poste ayant un bail `192.168.10.100–199`. Mettre ensuite à jour les règles (UFW, `DOCKER-USER`, ports liés dans le compose).
+
+### Scan nmap de contrôle
+
+**Wi-Fi de la table** (client `192.168.10.100–199` → `192.168.10.10`, `-sS -p-`) :
+
+| Port | Résultat | Attendu | Commentaire |
+|---|---|---|---|
+| 22 | open | open | UFW `LIMIT` |
+| 8883 | open | open | MQTTS (Docker) |
+| 443 | closed | closed | autorisé par UFW, rien n'écoute |
+| 8080 | closed | open | script IA arrêté au moment du scan ; relancé ensuite (`ss` : `0.0.0.0:8080`, `python3`) |
+| 1883 | filtered | filtered | lié à `192.168.41.123` uniquement |
+| reste | filtered | filtered | UFW deny |
+
+Conforme. Les scans eth0 (depuis `.52` et depuis une machine hors liste), `ssl-enum-ciphers` (8883) et `ssh-auth-methods` n'ont pas été reportés : à faire.
+
+### Reste à faire (avant la démo / le pentest)
+
+- [ ] **Lancer le script IA comme service au démarrage** (autonomie pour la démo) : unité systemd ou conteneur, avec limites CPU / RAM, sans dépendre d'une session SSH.
+- [ ] Scans nmap eth0 (`.52` et hors liste), `ssl-enum-ciphers -p 8883` (TLS ≥ 1.2), `ssh-auth-methods` (`publickey` seul) ; garder les fichiers `-oN` pour le rapport d'audit.
+- [ ] Supprimer le listener 1883 (R2) dès que l'ESP est validé en TLS ; retirer alors le saut 1883 de `DOCKER-USER`.
+- [ ] Authentification sur le flux 8080 (R22) ; script IA en MQTTS + mot de passe hors du code (en cours, IA).
+- [ ] Redémarrage de contrôle : `lightdm` désactivé (`multi-user.target`), services masqués, UFW, `sentinel-docker-user`, sysctl (`rp_filter = 1` sur eth0 / wlan0), conteneurs et AP.
+- [ ] Dossier : l'OS installé n'est pas Raspberry Pi OS **Lite** (bureau présent, désactivé) ; corriger la description.
+- [ ] Rotation du mot de passe MQTT `backend` (exposé en clair sur 1883) et, si l'appareil reste inconnu, du PSK Wi-Fi (R6).
+- [ ] Désinstaller Claude Code du Pi et supprimer ses identifiants avant le pentest.
+
