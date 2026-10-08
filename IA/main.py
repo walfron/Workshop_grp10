@@ -22,7 +22,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", 8883))
 MQTT_USER = os.getenv("MQTT_USER")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "sentinel/+/telemetry")
-DEV_API_URL = os.getenv("DEV_API_URL", "http://127.0.0.1:3000/api/v1/alerts")
+DEV_API_URL = os.getenv("DEV_API_URL", "http://192.168.10.195:3000/api/v1/alerts")
 ALERT_COOLDOWN_SEC = float(os.getenv("ALERT_COOLDOWN_SEC", 10.0))
 
 # Vérification stricte des variables critiques
@@ -200,7 +200,6 @@ def main():
     logging.info(f"Connexion au broker MQTT {MQTT_BROKER}...")
     while True:
         try:
-            client.tls_set(ca_certs="/home/sentinel/Workshop_grp10/infra/mosquitto/certs/ca.crt")
             client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
             client.loop_forever()
         except KeyboardInterrupt:
