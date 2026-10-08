@@ -1,0 +1,17 @@
+# Sentinel-X : règles DOCKER-USER (MQTT 1883 et 8883 sur eth0 limités à l'équipe),
+# rechargées après Docker. Installé dans /etc/systemd/system/.
+# PartOf : relancé quand docker.service redémarre.
+[Unit]
+Description=Sentinel-X : filtrage DOCKER-USER du MQTT sur eth0
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/docker-user-mqtt.sh start
+ExecStop=/usr/local/sbin/docker-user-mqtt.sh stop
+
+[Install]
+WantedBy=docker.service
