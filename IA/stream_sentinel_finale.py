@@ -331,6 +331,7 @@ def run_vision_loop():
     finally:
         cap.release()
 
+
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=start_mqtt_loop, daemon=True).start()
