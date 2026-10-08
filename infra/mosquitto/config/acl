@@ -1,17 +1,19 @@
 # Sentinel-X : ACL Mosquitto (aucun secret, versionné)
 # Les mots de passe sont dans infra/mosquitto/config/passwd (haché, non versionné)
 
-# ESP8266 : envoie les mesures et les alertes, reçoit les commandes
+# ESP8266 : envoie les mesures, les alertes et l'état des actionneurs, reçoit les commandes
 user sentinel
 topic write sentinel/+/telemetry
 topic write sentinel/+/alerts
+topic write sentinel/+/state
 topic read sentinel/+/cmd
 
-# API / dashboard : reçoit les mesures et les alertes, envoie les commandes
+# API / dashboard : reçoit les mesures, les alertes et l'état des actionneurs, envoie les commandes
 user backend
 topic read sentinel/+/telemetry
 topic read sentinel/+/alerts
 topic read sentinel/+/system
+topic read sentinel/+/state
 topic write sentinel/+/cmd
 
 # IA (YOLO + Isolation Forest) : lit les mesures, envoie les alertes

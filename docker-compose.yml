@@ -1,8 +1,20 @@
 # Sentinel-X — pile du Raspberry Pi 5 (PC Serveur Local)
 # Secrets : uniquement via .env (non versionné, voir .env.example)
 # Règles : pas de privileged, pas de socket Docker monté, no-new-privileges,
-#          cap_drop ALL, utilisateurs non-root, limites mémoire/CPU
-#          (marge gardée pour le futur conteneur IA / YOLO).
+#          cap_drop ALL, utilisateurs non-root, read_only, limites mémoire/CPU
+#          (marge gardée pour le script IA / YOLO, lancé sur l'hôte : infra/ia/).
+#
+# Réseaux :
+#   edge      (sortie, IP fixe) : caddy seul, 443 publié, accès au flux webcam de l'hôte
+#   web       (interne)         : caddy <-> api
+#   mqtt      (interne)         : api <-> mosquitto (1883 en clair, jamais publié)
+#   mqtt-pub  (sortie)          : mosquitto seul, 8883 publié
+# L'API n'est sur aucun réseau de sortie : ni internet ni réseau de l'école.
+#
+# Ports publiés liés à des IP précises (les ports Docker contournent UFW ; eth0 est
+# filtré par IP source dans DOCKER-USER : infra/hardening/docker-user-mqtt.sh).
+# 192.168.10.10 et 192.168.41.123 restent publiables sans wlan0 / eth0 grâce à
+# net.ipv4.ip_nonlocal_bind=1 (infra/network/sysctl-90-sentinel.conf).
 
 name: sentinel
 
@@ -11,15 +23,11 @@ services:
     image: eclipse-mosquitto:2.0.22
     user: "1883:1883"
     restart: unless-stopped
-    # Ports liés à des IP précises : les ports publiés par Docker contournent UFW.
-    # 192.168.10.10 = IP du point d'accès (wlan0) : publiable même avant que l'AP
-    # ne monte grâce à net.ipv4.ip_nonlocal_bind=1 (infra/network/sysctl-90-sentinel.conf).
     ports:
       - "192.168.10.10:8883:8883"    # MQTTS, Wi-Fi de la table (ESP, postes d'admin)
-      - "192.168.41.123:8883:8883"   # MQTTS, administration via eth0
-      # TEMPORAIRE : 1883 en clair (avec auth + ACL), eth0 uniquement, jamais sur
-      # le Wi-Fi, jusqu'à validation du TLS sur l'ESP par DEV. À SUPPRIMER avant jeudi.
-      - "192.168.41.123:1883:1883"
+      - "192.168.41.123:8883:8883"   # MQTTS, eth0 (équipe uniquement, DOCKER-USER)
+      # 1883 : plus publié. Listener conservé dans mosquitto.conf pour l'API seule,
+      # sur le réseau interne « mqtt » (R2).
     volumes:
       - ./infra/mosquitto/config:/mosquitto/config:ro
       - ./infra/mosquitto/certs:/mosquitto/certs:ro
@@ -33,64 +41,104 @@ services:
           memory: 128M
           cpus: "0.50"
           pids: 100
-    networks: [mqtt]
-
-  db:
-    # PostgreSQL 16 : choix à confirmer avec DEV
-    image: postgres:16-alpine
-    user: "70:70"            # utilisateur postgres de l'image alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER manquant dans .env}
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB manquant dans .env}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD manquant dans .env}
-    volumes:
-      - db-data:/var/lib/postgresql/data
-    # Aucun port publié : joignable uniquement par l'API sur le réseau interne "db"
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: "1.0"
-          pids: 200
-    networks: [db]
+    networks: [mqtt, mqtt-pub]
 
   api:
-    # PLACEHOLDER en attendant l'image de DEV (backend REST/WebSocket)
-    image: traefik/whoami:v1.11.0
-    command: ["--port", "8080"]
-    user: "65534:65534"
+    # API REST / WebSocket + dashboard (DEV), image construite depuis la racine
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sentinel-api:local
+    user: "10001:10001"
     restart: unless-stopped
-    # Local uniquement pour les tests ; l'exposition finale se fera en 443/HTTPS
-    ports:
-      - "127.0.0.1:8080:8080"
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/sentinel.db
+      MQTT_URL: mqtt://mosquitto:1883
+      MQTT_USERNAME: ${MQTT_BACKEND_USER:?MQTT_BACKEND_USER manquant dans .env}
+      MQTT_PASSWORD: ${MQTT_BACKEND_PASSWORD:?MQTT_BACKEND_PASSWORD manquant dans .env}
+      API_KEY: ${API_KEY:?API_KEY manquant dans .env}
+      EMBEDDED_BROKER: "false"   # broker aedes intégré (sans authentification) : jamais
+    volumes:
+      - api-data:/data           # SQLite (DB_PATH)
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    # Aucun port publié : joignable uniquement par caddy (réseau « web »)
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
-      db:
-        condition: service_healthy
       mosquitto:
         condition: service_started
     deploy:
       resources:
         limits:
+          memory: 256M
+          cpus: "1.0"
+          pids: 100
+    networks: [web, mqtt]
+
+  caddy:
+    # Reverse proxy HTTPS, version fixée
+    image: caddy:2.10.2-alpine
+    # UID 1883 : seul propriétaire de server.key (600 1883:1883), partagé avec Mosquitto
+    user: "1883:1883"
+    restart: unless-stopped
+    environment:
+      DASHBOARD_USER: ${DASHBOARD_USER:?DASHBOARD_USER manquant dans .env}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:?DASHBOARD_PASSWORD_HASH manquant dans .env}
+    ports:
+      - "192.168.10.10:443:8443"     # dashboard, Wi-Fi de la table
+      - "192.168.41.123:443:8443"    # dashboard, eth0 (équipe uniquement, DOCKER-USER)
+      - "127.0.0.1:3000:3000"        # alertes du script IA (hôte) : POST /api/v1/alerts seul
+    extra_hosts:
+      # Passerelle du réseau « edge » = hôte : flux webcam Flask :8080 (UFW : règle dédiée)
+      - "host.docker.internal:172.30.0.1"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./infra/mosquitto/certs/server.crt:/certs/server.crt:ro
+      - ./infra/mosquitto/certs/server.key:/certs/server.key:ro
+    tmpfs:
+      - /data:size=8m,uid=1883,gid=1883,mode=0700
+      - /config:size=8m,uid=1883,gid=1883,mode=0700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
           memory: 64M
           cpus: "0.50"
-          pids: 50
-    networks: [mqtt, db]
+          pids: 100
+    networks: [edge, web]
 
 networks:
-  mqtt: {}
-  db:
-    internal: true   # pas de sortie vers l'extérieur ni de port publiable
+  edge:
+    driver_opts:
+      com.docker.network.bridge.name: br-sentinel-edge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+  web:
+    internal: true
+  mqtt:
+    internal: true
+  mqtt-pub: {}
 
 volumes:
-  db-data:
+  api-data:
