@@ -97,8 +97,6 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_ROUGE, OUTPUT);
   pinMode(LED_VERTE, OUTPUT);
-
-  digitalWrite(LED_VERTE, remoteLedVerte ? HIGH : LOW);
   digitalWrite(LED_ROUGE, LOW);
 
   WiFi.config(IPAddress(192, 168, 10, 21), IPAddress(192, 168, 10, 10), IPAddress(255, 255, 255, 0));
@@ -229,6 +227,10 @@ void loop() {
   // Gestion MQTT
   if (!client.connected()) reconnectMQTT();
   client.loop();
+
+  // LED verte : allumee si WiFi OK et MQTT connecte (ou commande remote)
+  bool etatVerte = remoteLedVerte || (WiFi.status() == WL_CONNECTED && client.connected());
+  digitalWrite(LED_VERTE, etatVerte ? HIGH : LOW);
 
   auto num = [](float v) { return isnan(v) ? String("null") : String(v, 1); };
   String payload = String("{\"device_id\":\"") + MQTT_CLIENT_ID + "\"" +
