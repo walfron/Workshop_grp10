@@ -4,35 +4,42 @@ from pathlib import Path
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import classification_report
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-TRAIN_CSV = BASE_DIR / "data" / "sensors_train.csv"
-TEST_CSV = BASE_DIR / "data" / "sensors_test.csv"
-MODEL_PATH = BASE_DIR / "models" / "isolation_forest.joblib"
+SCRIPT_DIR = Path(__file__).resolve().parent
 
-def train():
-    df_train = pd.read_csv(TRAIN_CSV)
-    df_test = pd.read_csv(TEST_CSV)
+IA_DIR = SCRIPT_DIR.parent.parent
 
-    features = ["temperature", "humidity", "gas_ppm", "motion"]
-    X_train = df_train[features]
-    X_test = df_test[features]
-    y_test = df_test["label"]
+CSV_PATH = IA_DIR / "Data" / "telemetry_dataset.csv"
+MODELS_DIR = IA_DIR / "Models"
+OUTPUT_MODEL_PATH = MODELS_DIR / "Isolation_Forest.joblib"
 
-    model = IsolationForest(
-        n_estimators=100,
-        contamination=0.03,
-        random_state=42,
-        n_jobs=-1
-    )
-    model.fit(X_train)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    y_pred = model.predict(X_test)
-    print("Évaluation sur le jeu de test avec anomalies injectées :")
-    print(classification_report(y_test, y_pred, target_names=["Anomalie (-1)", "Nominal (1)"]))
+print(f"[INFO] Chargement du jeu de données depuis : {CSV_PATH}")
 
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
-    print(f"Modèle sauvegardé dans {MODEL_PATH}")
+if not CSV_PATH.exists():
+    raise FileNotFoundError(f"Le fichier {CSV_PATH} est introuvable. Vérifie son emplacement.")
 
-if __name__ == "__main__":
-    train()
+df = pd.read_csv(CSV_PATH)
+
+FEATURES = ["temperature", "humidity", "gas", "motion"]
+X = df[FEATURES]
+y_true = df["label"] if "label" in df.columns else None
+
+print("[INFO] Entraînement de l'Isolation Forest en cours...")
+model = IsolationForest(
+    n_estimators=100,
+    contamination=0.05,
+    max_samples="auto",
+    random_state=42,
+    n_jobs=-1
+)
+
+model.fit(X)
+
+if y_true is not None:
+    y_pred = model.predict(X)
+    print("\n--- Rapport de performance ---")
+    print(classification_report(y_true, y_pred, target_names=["Anomalie (-1)", "Nominal (1)"]))
+
+joblib.dump(model, OUTPUT_MODEL_PATH)
+print(f"\n[SUCCÈS] Modèle sauvegardé avec succès dans : {OUTPUT_MODEL_PATH}")

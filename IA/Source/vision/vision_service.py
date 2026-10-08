@@ -8,7 +8,7 @@ from pathlib import Path
 class VisionDetector:
     def __init__(self, model_path: Path | None = None, confidence_threshold: float = 0.55, cooldown_sec: int = 15):
         if model_path is None:
-            model_path = Path(__file__).resolve().parents[2] / "models" / "yolov8n.onnx"
+            model_path = Path(__file__).resolve().parents[2] / "Models" / "yolov8n.onnx"
 
         self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
@@ -22,17 +22,18 @@ class VisionDetector:
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         return np.expand_dims(img, axis=0)
 
-    def detect_person(self, frame: np.ndarray) -> tuple[bool, float, list[int] | None]:
+    def detect_person(self, frame: np.ndarray) -> tuple[bool, bool, float, list[int] | None]:
         """
-        Détecte la présence d'une personne (classe 0 sur COCO).
-        Retourne : (intrusion_detectee, confiance, bounding_box)
+        Retourne :
+          - is_present (bool) : une personne est-elle visible actuellement ?
+          - should_alert (bool) : doit-on envoyer une alerte réseau (cooldown respecté) ?
+          - best_score (float) : confiance de détection
+          - box (list) : coordonnées [cx, cy, w, h] normalisées
         """
         input_tensor = self.preprocess(frame)
         outputs = self.session.run(None, {self.input_name: input_tensor})[0]
 
-        # Format de sortie YOLOv8 : [1, 84, 8400] -> transpose en [8400, 84]
-        predictions = np.transpose(outputs[0])
-
+        predictions = np.transpose(outputs[0])  # Shape: [8400, 84]
         boxes = predictions[:, :4]
         scores = predictions[:, 4:]
 
@@ -41,11 +42,15 @@ class VisionDetector:
         max_idx = np.argmax(person_scores)
         best_score = float(person_scores[max_idx])
 
-        current_time = time.time()
-        if best_score >= self.confidence_threshold:
+        is_present = best_score >= self.confidence_threshold
+        should_alert = False
+        box = None
+
+        if is_present:
+            box = boxes[max_idx].astype(int).tolist()
+            current_time = time.time()
             if current_time - self.last_alert_time >= self.cooldown_sec:
                 self.last_alert_time = current_time
-                box = boxes[max_idx].astype(int).tolist()
-                return True, best_score, box
+                should_alert = True
 
-        return False, best_score, None
+        return is_present, should_alert, best_score, box
