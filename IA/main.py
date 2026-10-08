@@ -39,10 +39,10 @@ logging.basicConfig(
 # --- 2. Recherche et chargement du modèle Isolation Forest ---
 CANDIDATE_MODEL_PATHS = [
     Path(os.getenv("MODEL_PATH", "")),
-    SCRIPT_DIR / "isolation_forest.joblib",
-    SCRIPT_DIR.parent / "models" / "isolation_forest.joblib",
-    SCRIPT_DIR.parent.parent / "models" / "isolation_forest.joblib",
-    Path("/home/sentinel/isolation_forest.joblib")
+    SCRIPT_DIR / "Isolation_Forest.joblib",
+    SCRIPT_DIR.parent / "Models" / "Isolation_Forest.joblib",
+    SCRIPT_DIR.parent.parent / "Models" / "Isolation_Forest.joblib",
+    Path("/home/sentinel/Isolation_Forest.joblib")
 ]
 
 model_path = next((p for p in CANDIDATE_MODEL_PATHS if p.is_file()), None)
@@ -200,6 +200,7 @@ def main():
     logging.info(f"Connexion au broker MQTT {MQTT_BROKER}...")
     while True:
         try:
+            client.tls_set(ca_certs="/home/sentinel/Workshop_grp10/infra/mosquitto/certs/ca.crt")
             client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
             client.loop_forever()
         except KeyboardInterrupt:
