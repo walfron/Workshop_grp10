@@ -195,8 +195,32 @@ main {
   gap: 16px;
 }
 
+.metric {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.metric-value {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0;
+  font-size: 2.2rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value span {
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
 .chart {
   height: 180px;
+  min-width: 0;
 }
 
 .split {
