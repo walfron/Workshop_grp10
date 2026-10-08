@@ -1,5 +1,5 @@
 const env = (name, fallback) => process.env[name] || fallback
-const prefix = env('MQTT_TOPIC_PREFIX', 'sentinel/g10')
+const prefix = env('MQTT_TOPIC_PREFIX', 'sentinel/1')
 const supervisionPrefix = env('MQTT_SUPERVISION_PREFIX', 'sentinel/1')
 
 export const config = {

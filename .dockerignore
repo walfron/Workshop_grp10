@@ -1,7 +1,0 @@
-*
-!backend/package*.json
-!backend/src
-!frontend/package*.json
-!frontend/index.html
-!frontend/vite.config.js
-!frontend/src

@@ -1,6 +1,6 @@
 import mqtt from 'mqtt'
 
-const prefix = process.env.MQTT_TOPIC_PREFIX || 'sentinel/g10'
+const prefix = process.env.MQTT_TOPIC_PREFIX || 'sentinel/1'
 const client = mqtt.connect(process.env.MQTT_URL || 'mqtt://localhost:1883', {
   clientId: 'esp-simulateur',
   username: process.env.MQTT_USERNAME,
