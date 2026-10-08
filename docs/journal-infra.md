@@ -678,3 +678,30 @@ Conforme. Les scans eth0 (depuis `.52` et depuis une machine hors liste), `ssl-e
 - [ ] Rotation du mot de passe MQTT `backend` (exposé en clair sur 1883) et, si l'appareil reste inconnu, du PSK Wi-Fi (R6).
 - [ ] Désinstaller Claude Code du Pi et supprimer ses identifiants avant le pentest.
 
+## 2026-10-08 — Intégration de la pile : PRÉPARÉ, NON APPLIQUÉ
+
+Branche locale `infra/integration` (worktree `~/Workshop_grp10-integration`, basé sur `origin/main` `7353da9`) : le dossier de production `~/Workshop_grp10` n'a pas été modifié (configs Mosquitto montées en service). Aucun sudo, aucun `docker compose up`. Procédure : `docs/procedure-integration.md`.
+
+### Constats sur `main`
+
+- `docker-compose.yml` : `api` = placeholder `traefik/whoami` ; `db` PostgreSQL inutilisé (le backend utilise SQLite, `node:sqlite`, `DB_PATH`).
+- `backend/Dockerfile` : n'embarque pas `frontend/dist` alors que `src/index.js` le sert (`../../frontend/dist`).
+- Backend : écoute `sentinel/g10/telemetry`, `sentinel/g10/state` (absent de l'ACL), `sentinel/1/system`, `sentinel/1/alerts` ; publie `sentinel/g10/cmd`. Broker MQTT **aedes intégré** sans authentification si `EMBEDDED_BROKER=true`. Commandes acceptées par WebSocket **sans clé API** (R23).
+- `IA/main.py` : MQTT `127.0.0.1:1883` sans identifiant, topic `sentinel/sensors/data` ; API `127.0.0.1:8000` ; format d'alerte (`severity`, `type`, `details`) **incompatible** avec l'API (`level`, `message`, `source`) → rejet 400. Script de flux webcam pas encore dans le dépôt.
+
+### Fichiers préparés
+
+- `Dockerfile` (racine) + `.dockerignore` (liste blanche) : build Vite, dépendances de production, image finale Node 24 alpine, UID 10001 (≠ UID 1000 de `sentinel`), `/data` seul inscriptible ; `VITE_WEBCAM_URL=/webcam/video_feed` (même origine, pas de contenu mixte). Lockfile vérifié : binaire `@rolldown/binding-linux-arm64-musl` présent.
+- `docker-compose.yml` : `db` supprimé ; `api` construite (MQTT `mqtt://mosquitto:1883`, compte `backend`, `API_KEY`, `EMBEDDED_BROKER=false`, volume `api-data`, `read_only`, 256 Mo / 1 CPU, healthcheck `/api/v1/health`) ; **1883 retiré des ports publiés** ; `caddy:2.10.2-alpine` (UID 1883, port interne 8443, publié `192.168.10.10:443` et `192.168.41.123:443`, `127.0.0.1:3000` pour les alertes IA) ; réseaux `edge` (172.30.0.0/24, `br-sentinel-edge`), `web` et `mqtt` **internes** (l'API n'a aucune sortie), `mqtt-pub`. Validé : `docker compose config --quiet` (faux `.env`).
+- `infra/caddy/Caddyfile` : TLS 1.2/1.3 avec `server.crt` / `server.key`, authentification Basic (bcrypt) sur tout le site, en-têtes de sécurité, `/webcam/*` → flux Flask de l'hôte, reste → `api:3000` ; listener local `:3000` limité à `POST /api/v1/alerts` et `/healthz`. Validé par `caddy validate` (seul le certificat manquait dans le conteneur de test ; image `caddy:2.10.2-alpine` téléchargée sur le Pi).
+- `infra/mosquitto/config/acl` : `sentinel` écrit `sentinel/+/state`, `backend` le lit.
+- `infra/hardening/docker-user-mqtt.sh` : 443 ajouté (`PORTS="1883 8883 443"`, saut 1883 gardé pour le retour arrière).
+- `infra/hardening/ufw-sentinel.sh` : 3 règles 8080 ajoutées le 2026-10-08 + règle `br-sentinel-edge` (Caddy → flux webcam).
+- `infra/ia/sentinel-ia.service` + `infra/ia/ia.env.example` : script en paramètre (`IA_SCRIPT`, drop-in), `EnvironmentFile=/etc/sentinel/ia.env` (variables IA seules), groupe `video`, `Restart=always`, `MemoryMax=1536M`, `CPUQuota=250%`, durcissement de `sentinel-monitor` sauf `PrivateDevices` (webcam) et `MemoryDenyWriteExecute` (JIT onnxruntime). Pas de `python3 -I` : `onnxruntime` est en pip `--user`.
+- `.env.example` : PostgreSQL retiré ; `API_KEY`, `DASHBOARD_USER`, `DASHBOARD_PASSWORD_HASH` (entre apostrophes : testé, Compose garde les `$`).
+
+### Points ouverts
+
+- Prérequis bloquants avant application : ESP en 8883 (DEV), script IA conforme (MQTTS, format d'alerte, clé API, variables d'environnement).
+- Non testé : build réel de l'image (`docker compose build`), démarrage, authentification Basic sur le WebSocket selon les navigateurs.
+
