@@ -4,7 +4,6 @@ import logging
 import os
 import time
 from pathlib import Path
-
 import joblib
 import numpy as np
 import paho.mqtt.client as mqtt
@@ -41,8 +40,7 @@ CANDIDATE_MODEL_PATHS = [
     Path(os.getenv("MODEL_PATH", "")),
     SCRIPT_DIR / "Isolation_Forest.joblib",
     SCRIPT_DIR.parent / "Models" / "Isolation_Forest.joblib",
-    SCRIPT_DIR.parent.parent / "Models" / "Isolation_Forest.joblib",
-    Path("/home/sentinel/Isolation_Forest.joblib")
+    SCRIPT_DIR.parent.parent / "Models" / "Isolation_Forest.joblib"
 ]
 
 model_path = next((p for p in CANDIDATE_MODEL_PATHS if p.is_file()), None)
@@ -106,7 +104,7 @@ def process_telemetry(payload: dict, topic: str):
     # Extraction et standardisation des mesures
     raw_temp = payload.get("temperature", payload.get("temp", 22.0))
     raw_hum = payload.get("humidity", payload.get("hum", 50.0))
-    raw_gas = payload.get("gas_ppm", payload.get("gas", payload.get("mq2", 100.0)))
+    raw_gas = payload.get("gas", payload.get("gas", payload.get("mq2", 100.0)))
     raw_mot = payload.get("motion", payload.get("pir", payload.get("presence", 0)))
 
     try:

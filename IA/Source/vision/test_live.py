@@ -53,4 +53,4 @@ def test_camera_stream(camera_index: int = 0):
 
 
 if __name__ == "__main__":
-    test_camera_stream(camera_index=1)
+    test_camera_stream(camera_index=0)
