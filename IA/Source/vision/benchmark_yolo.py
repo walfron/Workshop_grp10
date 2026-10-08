@@ -20,7 +20,7 @@ def export_to_onnx():
             exported_file.rename(ONNX_PATH)
 
 
-def run_benchmark(device_index: int = 0, num_frames: int = 150):
+def run_benchmark(device_index: int = 1, num_frames: int = 150):
     export_to_onnx()
 
     session = ort.InferenceSession(str(ONNX_PATH), providers=["CPUExecutionProvider"])
