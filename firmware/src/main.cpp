@@ -3,27 +3,26 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <PubSubClient.h>
 #include "DHT.h"
-#include "config.h"
+#include "credentials.h"
+#include <PubSubClient.h>
+#include <time.h>
+#include <BearSSLHelpers.h>
+#include "ca.h"
 
-#define DHTPIN 14        // GPIO14 (D5) — DHT
-#define DHTTYPE DHT11
-#define PIRPIN 12        // GPIO12 (D6) — PIR HC-SR501
-#define BUZZER_PIN 13    // GPIO13 (D7) — buzzer actif
-#define LED_ROUGE 15     // GPIO15 (D8) — LED alerte
-#define LED_VERTE 16     // GPIO16 (D0) — LED connectée
-#define GAZ_SEUIL_DEMO 700
-
-WiFiClient espClient;
+BearSSL::WiFiClientSecure espClient;
 PubSubClient client(espClient);
-DHT dht(DHTPIN, DHTTYPE);
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
-unsigned long lastBlink = 0;
-bool blinkState = false;
 bool remoteBuzzer = false;
 bool remoteLedRouge = false;
+bool remoteLedVerte = false;
+
+#define DHTPIN 14        // GPIO14 (D5) — DHT22
+#define DHTTYPE DHT11
+#define PIRPIN 12        // GPIO12 (D6) — PIR HC-SR501
+#define BUZZER_PIN 13     // GPIO13 (D7) — buzzer actif
+#define LED_ROUGE 15      // GPIO15 (D8) — LED alerte
+#define LED_VERTE 16      // GPIO16 (D0) — LED connectée
 
 void applyCommand(const String& msg, const char* key, bool& target) {
   if (msg.indexOf(String("\"") + key + "\":true") >= 0) target = true;
@@ -36,72 +35,36 @@ void onCommand(char* topic, byte* payload, unsigned int length) {
   Serial.println("Commande recue : " + msg);
   applyCommand(msg, "buzzer", remoteBuzzer);
   applyCommand(msg, "led_red", remoteLedRouge);
+  applyCommand(msg, "led_green", remoteLedVerte);
 }
 
 void reconnectMQTT() {
-  Serial.print("MQTT connexion...");
-  if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
-    Serial.println("connecte a " MQTT_HOST);
-    client.subscribe(MQTT_TOPIC_COMMAND);
-  } else {
-    Serial.print("echec, rc=");
-    Serial.println(client.state());
+  if (!client.connected()) {
+    Serial.print("MQTT connexion...");
+    yield();
+    if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("connecte");
+      client.subscribe(MQTT_TOPIC_COMMAND);
+    } else {
+      Serial.print("echec, rc=");
+      Serial.println(client.state());
+      char sslError[128];
+      espClient.getLastSSLError(sslError, sizeof(sslError));
+      Serial.printf("rc=%d | SSL: %s | heure: %lld\n", client.state(), sslError, (long long)time(nullptr));
+    }
   }
 }
 
-String jsonNumber(float value) {
-  return isnan(value) ? String("null") : String(value, 1);
-}
+DHT dht(DHTPIN, DHTTYPE);
 
-void publishTelemetry(float t, float h, int gaz, bool presence) {
-  String payload = String("{\"device_id\":\"") + MQTT_CLIENT_ID + "\"" +
-    ",\"temperature\":" + jsonNumber(t) +
-    ",\"humidity\":" + jsonNumber(h) +
-    ",\"gas\":" + String(gaz) +
-    ",\"presence\":" + (presence ? "true" : "false") + "}";
-  client.publish(MQTT_TOPIC_TELEMETRY, payload.c_str());
-  Serial.println(payload);
-}
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
 
-void playAlarm() {
-  tone(BUZZER_PIN, 1200); delay(150); noTone(BUZZER_PIN); delay(100);
-  tone(BUZZER_PIN, 1200); delay(150); noTone(BUZZER_PIN); delay(100);
-  tone(BUZZER_PIN, 1200); delay(500); noTone(BUZZER_PIN);
-}
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-void updateLeds(bool alertActive) {
-  if (alertActive && millis() - lastBlink > 300) {
-    lastBlink = millis();
-    blinkState = !blinkState;
-  }
-  digitalWrite(LED_ROUGE, (alertActive && blinkState) || remoteLedRouge ? HIGH : LOW);
-  digitalWrite(LED_VERTE, client.connected() ? HIGH : LOW);
-}
-
-void showHeader() {
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println("SENTINEL-X");
-  display.println("AETHER / SN-001");
-  display.println("----------------");
-}
-
-void updateDisplay(float t, float h, int gaz, bool presence) {
-  showHeader();
-  display.println("WIFI: OK");
-  display.println(WiFi.localIP());
-  if (presence) display.println("! INTRUSION !");
-  if (gaz > GAZ_SEUIL_DEMO) display.println("* GAZ ELEVE *");
-  display.println("----------------");
-  if (isnan(h) || isnan(t)) {
-    display.println("Erreur DHT");
-  } else {
-    display.printf("T: %.1fC  H: %.1f%%\n", t, h);
-  }
-  display.printf("GAZ: %d\n", gaz);
-  display.println(presence ? "PIR: INTRUSION" : "PIR: CALME");
-  display.display();
-}
+unsigned long lastBlink = 0;
+bool blinkState = false;
+bool alertActive = false;
 
 void setup() {
   Serial.begin(115200);
@@ -110,9 +73,15 @@ void setup() {
     Serial.println(F("Echec SSD1306"));
     for (;;);
   }
+
+  display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(WHITE);
-  showHeader();
+  display.setCursor(0, 0);
+  display.println("SENTINEL-X");
+  display.println("AETHER CORP");
+  display.println("SN-001");
+  display.println("----------------");
   display.println("Connexion WiFi...");
   display.display();
 
@@ -121,16 +90,24 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_ROUGE, OUTPUT);
   pinMode(LED_VERTE, OUTPUT);
-  digitalWrite(LED_ROUGE, LOW);
-  digitalWrite(LED_VERTE, LOW);
 
+  digitalWrite(LED_VERTE, remoteLedVerte ? HIGH : LOW);
+  digitalWrite(LED_ROUGE, LOW);
+
+  WiFi.config(IPAddress(192, 168, 10, 21), IPAddress(192, 168, 10, 10), IPAddress(255, 255, 255, 0));
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  for (int attempt = 0; attempt < 20 && WiFi.status() != WL_CONNECTED; attempt++) delay(500);
+  int wifiTimeout = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 20) {
+    delay(500);
+    yield();
+    wifiTimeout++;
+  }
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println(F("WIFI FAIL"));
     display.println("WIFI: FAIL");
     display.display();
-    for (;;);
+    delay(2000);
+    ESP.restart();
   }
 
   Serial.println(F("WiFi OK"));
@@ -138,25 +115,129 @@ void setup() {
   delay(500);
   noTone(BUZZER_PIN);
 
-  client.setServer(MQTT_HOST, MQTT_PORT);
+  configTime(0, 0, "192.168.10.10");
+  BearSSL::X509List caCert(cert_pem);
+  espClient.setTrustAnchors(&caCert);
+  espClient.setX509Time(time(nullptr));
+
+  int timeWait = 0;
+  while (time(nullptr) < 1700000000 && timeWait < 20) {
+    delay(500);
+    yield();
+    timeWait++;
+  }
+  Serial.printf("Heure: %lld\n", (long long)time(nullptr));
+
+  client.setServer(IPAddress(192, 168, 10, 10), MQTT_PORT);
   client.setCallback(onCommand);
   reconnectMQTT();
+
+  digitalWrite(LED_VERTE, HIGH);
+  digitalWrite(LED_ROUGE, LOW);
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("SENTINEL-X");
+  display.println("AETHER CORP");
+  display.println("SN-001");
+  display.println("----------------");
+  display.println("WIFI: OK");
+  display.println(WiFi.localIP());
+  display.display();
 }
 
-void loop() {
-  if (!client.connected()) reconnectMQTT();
-  client.loop();
+unsigned long lastDisplay = 0;
 
+void loop() {
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   int gazValue = analogRead(A0);
-  bool presence = digitalRead(PIRPIN) == HIGH;
-  bool alertActive = presence || gazValue > GAZ_SEUIL_DEMO;
+  int pirState = digitalRead(PIRPIN);
 
-  if (alertActive || remoteBuzzer) playAlarm();
-  updateLeds(alertActive);
-  updateDisplay(t, h, gazValue, presence);
-  publishTelemetry(t, h, gazValue, presence);
+  // Alerte : intrusion OU gaz élevé (sans seuil IA, seuil de démo)
+  alertActive = (pirState == HIGH) || (gazValue > 700);
 
-  delay(2000);
+  // Motif alarme (intrusion / gaz)
+  if (alertActive) {
+    tone(BUZZER_PIN, 1200); delay(150); noTone(BUZZER_PIN); delay(100);
+    tone(BUZZER_PIN, 1200); delay(150); noTone(BUZZER_PIN); delay(100);
+    tone(BUZZER_PIN, 1200); delay(500); noTone(BUZZER_PIN);
+  }
+
+  // Cri de hibou (commande dashboard)
+  if (remoteBuzzer) {
+    tone(BUZZER_PIN, 400); delay(300); noTone(BUZZER_PIN); delay(100);
+    tone(BUZZER_PIN, 800); delay(300); noTone(BUZZER_PIN); delay(200);
+  }
+
+  // Clignotement LED rouge (alerte) — gestion non bloquante
+  if (alertActive || remoteLedRouge) {
+    if (millis() - lastBlink > 300) {
+      lastBlink = millis();
+      blinkState = !blinkState;
+      digitalWrite(LED_ROUGE, blinkState ? HIGH : LOW);
+    }
+  } else {
+    digitalWrite(LED_ROUGE, LOW);
+  }
+
+  digitalWrite(LED_VERTE, remoteLedVerte ? HIGH : LOW);
+
+  // Affichage OLED
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("SENTINEL-X");
+  display.println("AETHER / SN-001");
+  display.println("----------------");
+  display.println("WIFI: OK");
+  display.println(WiFi.localIP());
+
+  // Format conditionnel stylé direct dans loop()
+  if (pirState == HIGH) {
+    display.println(">>> PRESENCE <<<");
+    display.println("! INTRUSION !");
+  }
+  if (gazValue > 700) {
+    display.println("* GAZ ELEVEE *");
+  }
+
+  display.println("----------------");
+  if (isnan(h) || isnan(t)) {
+    display.println("Erreur DHT11");
+  } else {
+    display.print("T: ");
+    display.print(t);
+    display.println("C");
+    display.print("H: ");
+    display.print(h);
+    display.println("%");
+  }
+  display.print("GAZ: ");
+  display.println(gazValue);
+
+  if (pirState == HIGH) {
+    display.println("PIR: INTRUSION");
+  } else {
+    display.println("PIR: CALME");
+  }
+
+  // Gestion MQTT
+  if (!client.connected()) reconnectMQTT();
+  client.loop();
+
+  auto num = [](float v) { return isnan(v) ? String("null") : String(v, 1); };
+  String payload = String("{\"device_id\":\"") + MQTT_CLIENT_ID + "\"" +
+    ",\"temperature\":" + num(t) +
+    ",\"humidity\":" + num(h) +
+    ",\"gas\":" + String(gazValue) +
+    ",\"presence\":" + (pirState == HIGH ? "true" : "false") + "}";
+  client.publish(MQTT_TOPIC_TELEMETRY, payload.c_str());
+
+  display.display();
+
+  if (millis() - lastDisplay >= 2000) {
+    lastDisplay = millis();
+  }
+
+  delay(100);
 }
