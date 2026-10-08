@@ -5,7 +5,7 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 class AlertApiClient:
-    def __init__(self, api_url: str = "http://192.168.41.124:3000/api/v1/alerts", timeout: float = 3.0):
+    def __init__(self, api_url: str = "http://127.0.0.1:3000/api/v1/alerts", timeout: float = 3.0):
         self.api_url = api_url
         self.timeout = timeout
 

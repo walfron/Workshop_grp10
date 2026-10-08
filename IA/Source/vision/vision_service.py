@@ -8,7 +8,7 @@ from pathlib import Path
 class VisionDetector:
     def __init__(self, model_path: Path | None = None, confidence_threshold: float = 0.55, cooldown_sec: int = 15):
         if model_path is None:
-            model_path = Path(__file__).resolve().parents[2] / "models" / "yolov8n.onnx"
+            model_path = Path(__file__).resolve().parents[2] / "Models" / "yolov8n.onnx"
 
         self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name

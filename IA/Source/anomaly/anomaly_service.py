@@ -6,13 +6,13 @@ from pathlib import Path
 class AnomalyDetector:
     def __init__(self, model_path: Path | None = None):
         if model_path is None:
-            model_path = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.joblib"
+            model_path = Path(__file__).resolve().parents[2] / "Models" / "Isolation_Forest.joblib"
 
         if not model_path.exists():
             raise FileNotFoundError(f"Modèle introuvable : {model_path}. Lance train_model.py d'abord.")
 
         self.model = joblib.load(model_path)
-        self.features = ["temperature", "humidity", "gas_ppm", "motion"]
+        self.features = ["temperature", "humidity", "gas", "motion"]
 
     def evaluate(self, payload: dict) -> tuple[bool, float]:
         """
@@ -23,7 +23,7 @@ class AnomalyDetector:
             row = pd.DataFrame([{
                 "temperature": float(payload["temperature"]),
                 "humidity": float(payload["humidity"]),
-                "gas_ppm": float(payload["gas_ppm"]),
+                "gas": float(payload["gas"]),
                 "motion": int(payload["motion"])
             }])[self.features]
 
