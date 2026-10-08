@@ -1,0 +1,75 @@
+# Sentinel-X : reverse proxy HTTPS (dashboard, API, WebSocket, flux webcam)
+# Monté en lecture seule : /etc/caddy/Caddyfile. Aucun secret ici :
+# identifiant et hachage bcrypt du mot de passe lus dans l'environnement (.env).
+# Le conteneur écoute 8443 (non-root, sans capability) ; Docker publie 443 -> 8443.
+
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		protocols h1 h2
+	}
+}
+
+:8443 {
+	# Certificat de la PKI du projet (SAN IP:192.168.10.10, DNS:sentinel.local)
+	tls /certs/server.crt /certs/server.key {
+		protocols tls1.2 tls1.3
+	}
+
+	# Authentification sur tout le site : dashboard, API, WebSocket (/ws :
+	# les commandes buzzer / LEDs y passent sans clé API) et flux webcam (R22)
+	basic_auth {
+		{$DASHBOARD_USER} {$DASHBOARD_PASSWORD_HASH}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	request_body {
+		max_size 64KB
+	}
+
+	# Flux webcam (script IA sur l'hôte, Flask :8080), même origine que le dashboard
+	handle_path /webcam/* {
+		reverse_proxy host.docker.internal:8080
+	}
+
+	# API REST, WebSocket /ws et fichiers du dashboard
+	handle {
+		reverse_proxy api:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Listener local en clair, publié sur 127.0.0.1:3000 uniquement : permet au script IA
+# (hôte) de poster ses alertes sans exposer l'API. Seule route : POST /api/v1/alerts
+# (clé X-API-Key vérifiée par le backend). /healthz sert au healthcheck du conteneur.
+http://:3000 {
+	request_body {
+		max_size 16KB
+	}
+	handle /healthz {
+		respond "ok" 200
+	}
+	@alerts {
+		method POST
+		path /api/v1/alerts
+	}
+	handle @alerts {
+		reverse_proxy api:3000
+	}
+	handle {
+		respond 404
+	}
+}

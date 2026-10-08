@@ -32,6 +32,14 @@ for ip in "$ADMIN" "$DEV" "$IA"; do
   ufw allow in on eth0 from "$ip" to 192.168.41.123 port 443 proto tcp comment 'HTTPS equipe (eth0)'
 done
 
+# Flux webcam du script IA (Flask :8080 sur l'hôte, R22). Accès direct de l'équipe
+# (règles ajoutées le 2026-10-08) : à retirer quand le dashboard passe par Caddy (/webcam/).
+ufw allow in on eth0 from "$DEV" to 192.168.41.123 port 8080 proto tcp comment 'Flux webcam -> dashboard DEV'
+ufw allow in on eth0 from "$ADMIN" to 192.168.41.123 port 8080 proto tcp comment 'Flux webcam -> admin'
+ufw allow in on wlan0 from 192.168.10.0/24 to 192.168.10.10 port 8080 proto tcp comment 'Flux webcam -> Wi-Fi table'
+# Caddy (réseau Docker « edge », 172.30.0.0/24) -> hôte : flux webcam via https://.../webcam/
+ufw allow in on br-sentinel-edge from 172.30.0.0/24 to 172.30.0.1 port 8080 proto tcp comment 'Caddy -> flux webcam'
+
 # Services réseau du point d'accès (wlan0 uniquement)
 ufw allow in on wlan0 to any port 67 proto udp comment 'DHCP AP'
 ufw allow in on wlan0 from 192.168.10.0/24 to 192.168.10.10 port 123 proto udp comment 'NTP local'
