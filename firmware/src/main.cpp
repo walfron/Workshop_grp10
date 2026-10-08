@@ -12,6 +12,7 @@
 
 BearSSL::WiFiClientSecure espClient;
 PubSubClient client(espClient);
+BearSSL::X509List caCertGlobal(cert_pem); // ancre TLS globale (pas locale)
 
 bool remoteBuzzer = false;
 bool remoteLedRouge = false;
@@ -38,12 +39,18 @@ void onCommand(char* topic, byte* payload, unsigned int length) {
   applyCommand(msg, "led_green", remoteLedVerte);
 }
 
+static int reconnectDelay = 5000; // 5s initial, double jusqu'a 60s
+
 void reconnectMQTT() {
   if (!client.connected()) {
+    delay(reconnectDelay);
+    reconnectDelay = min(reconnectDelay * 2, 60000);
     Serial.print("MQTT connexion...");
+    espClient.setX509Time(time(nullptr)); // heure mise a jour avant chaque connexion TLS
     yield();
     if (client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
       Serial.println("connecte");
+      reconnectDelay = 2000; // reset
       client.subscribe(MQTT_TOPIC_COMMAND);
     } else {
       Serial.print("echec, rc=");
@@ -116,17 +123,15 @@ void setup() {
   noTone(BUZZER_PIN);
 
   configTime(0, 0, "192.168.10.10");
-  BearSSL::X509List caCert(cert_pem);
-  espClient.setTrustAnchors(&caCert);
-  espClient.setX509Time(time(nullptr));
-
+  espClient.setTrustAnchors(&caCertGlobal);
   int timeWait = 0;
   while (time(nullptr) < 1700000000 && timeWait < 20) {
     delay(500);
     yield();
     timeWait++;
   }
-  Serial.printf("Heure: %lld\n", (long long)time(nullptr));
+  Serial.printf("Heure: %lld - OK\n", (long long)time(nullptr));
+  espClient.setBufferSizes(1024, 1024);
 
   client.setServer(IPAddress(192, 168, 10, 10), MQTT_PORT);
   client.setCallback(onCommand);
