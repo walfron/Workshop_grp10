@@ -1,0 +1,10 @@
+# Nmap 7.80 scan initiated Thu Oct 08 11:47:57 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.exe" -Pn -p 8080 -oN wlan0-8080.txt 192.168.10.10
+mass_dns: warning: Unable to determine any DNS servers. Reverse DNS is disabled. Try using --system-dns or specify valid servers with --dns-servers
+Nmap scan report for 192.168.10.10
+Host is up (0.0053s latency).
+
+PORT     STATE SERVICE
+8080/tcp open  http-proxy
+MAC Address: 2C:CF:67:2F:D0:19 (Unknown)
+
+# Nmap done at Thu Oct 08 11:47:58 2026 -- 1 IP address (1 host up) scanned in 1.37 seconds

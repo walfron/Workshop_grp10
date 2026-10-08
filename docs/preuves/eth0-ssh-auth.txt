@@ -1,0 +1,10 @@
+# Nmap 7.80 scan initiated Thu Oct 08 11:35:33 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.exe" -Pn --script ssh-auth-methods --script-args ssh.user=sentinel -p 22 -oN eth0-ssh-auth.txt 192.168.41.123
+Nmap scan report for 192.168.41.123
+Host is up (0.0027s latency).
+
+PORT   STATE SERVICE
+22/tcp open  ssh
+|_ssh-auth-methods: ERROR: Script execution failed (use -d to debug)
+MAC Address: 2C:CF:67:2F:D0:18 (Unknown)
+
+# Nmap done at Thu Oct 08 11:35:35 2026 -- 1 IP address (1 host up) scanned in 2.18 seconds
