@@ -1,0 +1,68 @@
+# Sentinel-X — script IA (vision YOLOv8n + Isolation Forest, flux webcam Flask :8080)
+# Installé dans /etc/systemd/system/sentinel-ia.service
+# Lancé sur l'hôte (webcam USB, paquets apt + pip --user) sous l'utilisateur sentinel.
+#
+# Nom du script : paramètre IA_SCRIPT ci-dessous, à fixer quand l'IA l'aura poussé :
+#   sudo systemctl edit sentinel-ia      puis, dans le drop-in :
+#   [Service]
+#   Environment=IA_SCRIPT=/home/sentinel/Workshop_grp10/IA/<script>.py
+#
+# Secrets : /etc/sentinel/ia.env (root:sentinel 640), variables IA UNIQUEMENT
+# (modèle : infra/ia/ia.env.example), jamais le .env complet de la pile.
+[Unit]
+Description=Sentinel-X : script IA (vision + anomalies, flux webcam :8080)
+After=network-online.target docker.service chrony.service
+Wants=network-online.target docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+SupplementaryGroups=video
+Environment=IA_SCRIPT=/home/sentinel/Workshop_grp10/IA/CHANGEME.py
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/sentinel/ia.env
+WorkingDirectory=/home/sentinel/Workshop_grp10/IA
+# Pas de « python3 -I » : onnxruntime est installé en pip --user (~/.local)
+ExecStart=/usr/bin/python3 ${IA_SCRIPT}
+Restart=always
+RestartSec=5
+
+# Ressources : YOLO est le plus gros consommateur du Pi (8 Go partagés)
+MemoryHigh=1G
+MemoryMax=1536M
+CPUQuota=250%
+TasksMax=128
+Nice=5
+
+# Durcissement (aligné sur sentinel-monitor). Exceptions :
+#  - pas de PrivateDevices : accès à /dev/video* (groupe video) ;
+#  - pas de MemoryDenyWriteExecute : onnxruntime / OpenCV peuvent générer du code (JIT).
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=char-video4linux rw
+DeviceAllow=char-media rw
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
