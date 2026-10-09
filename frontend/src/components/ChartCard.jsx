@@ -5,7 +5,7 @@ const LINE_COLOR = '#b5703a'
 const GRID_COLOR = '#ece2d5'
 const AXIS_COLOR = '#a08a76'
 
-export default function ChartCard({ title, unit, dataKey, digits, history, value }) {
+export default function ChartCard({ title, unit, dataKey, digits, history, value, padding = 1 }) {
   return (
     <section className="card">
       <div className="card-header">
@@ -21,7 +21,12 @@ export default function ChartCard({ title, unit, dataKey, digits, history, value
             <AreaChart data={history} margin={{ top: 5, right: 5, bottom: 0, left: -15 }}>
               <CartesianGrid stroke={GRID_COLOR} vertical={false} />
               <XAxis dataKey="ts" tickFormatter={formatTime} stroke={AXIS_COLOR} fontSize={11} minTickGap={40} />
-              <YAxis stroke={AXIS_COLOR} fontSize={11} domain={['auto', 'auto']} width={45} />
+              <YAxis
+                stroke={AXIS_COLOR}
+                fontSize={11}
+                domain={[(dataMin) => dataMin - padding, (dataMax) => dataMax + padding]}
+                width={45}
+              />
               <Tooltip labelFormatter={formatTime} formatter={(v) => [`${v} ${unit}`, title]} />
               <Area
                 type="monotone"

@@ -6,9 +6,9 @@ import StatusPanel from '../components/StatusPanel.jsx'
 import WebcamPanel from '../components/WebcamPanel.jsx'
 
 const METRICS = [
-  { dataKey: 'temperature', title: 'Température', unit: '°C', digits: 1 },
-  { dataKey: 'humidity', title: 'Humidité', unit: '%', digits: 1 },
-  { dataKey: 'gas', title: 'Gaz / fumée', unit: '', digits: 0 },
+  { dataKey: 'temperature', title: 'Température', unit: '°C', digits: 1, padding: 1 },
+  { dataKey: 'humidity', title: 'Humidité', unit: '%', digits: 1, padding: 5 },
+  { dataKey: 'gas', title: 'Gaz / fumée', unit: '', digits: 0, padding: 10 },
 ]
 
 export default function DashboardPage({ latest, history, alerts, linkUp, deviceOnline, presence, threatLevel, actuators, sendCommand }) {
